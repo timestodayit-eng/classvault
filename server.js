@@ -187,7 +187,12 @@ function sameOriginFetch(req) {
   if (mode === 'navigate') return false;
   return true;
 }
+// In-app browsers of downloader apps (VidMate, SnapTube, UC Browser…) and Android WebViews sniff media URLs and offer
+// a "download" button. We refuse to play inside them and ask the student to open the page in Chrome/Safari instead.
+const DOWNLOADER_UA = /; wv\)|\bwv\b.*Version\/\d|UCBrowser|UCWEB|UBrowser|VidMate|SnapTube|Snaptube|TubeMate|Videoder|InsTube|KeepVid|Y2mate|savefrom|NewPipe|1DM|IDMan|ADM\b|FBAN|FBAV|Instagram|Line\//i;
+const badClient = (req) => DOWNLOADER_UA.test(String(req.get('user-agent') || ''));
 function streamSession(req, res, needToken = true) {
+  if (badClient(req)) { res.status(403).end(); return null; }
   const s = currentStudent(req);
   const p = needToken ? verify(req.query.tk) : null;
   const sid = needToken ? p && p.ss : Number(req.query.s);
@@ -249,6 +254,7 @@ function parseUA(ua = '') {
 }
 
 app.post('/api/track/start', requireStudent, (req, res) => {
+  if (badClient(req)) return res.status(403).json({ error: 'browser' });
   const v = q("SELECT * FROM videos WHERE id=? AND status='ready'").get(req.body.videoId);
   if (!v) return res.status(404).json({ error: 'ভিডিও পাওয়া যায়নি' });
   const ua = String(req.get('user-agent') || '').slice(0, 400);

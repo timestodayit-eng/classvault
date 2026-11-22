@@ -43,6 +43,13 @@
     const r = await fetch('/api/track/start', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoId, screen: `${screen.width}x${screen.height}`, native: !(window.Hls && Hls.isSupported()) && !!v.canPlayType('application/vnd.apple.mpegurl') }) });
     if (r.status === 401) return (location.href = '/');
+    if (r.status === 403) {
+      const chrome = /Android/i.test(navigator.userAgent) ? `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.android.chrome;end` : null;
+      $('title').textContent = 'এই অ্যাপে ভিডিও চলবে না';
+      showOv('🚫', 'নিরাপত্তার কারণে ডাউনলোডার অ্যাপ বা অ্যাপের ভেতরের ব্রাউজারে (Facebook/Messenger সহ) ভিডিও চলে না। Chrome বা Safari তে লিংকটি খুলুন।',
+        chrome ? 'Chrome এ খুলুন' : 'লিংক কপি করুন', () => { if (chrome) location.href = chrome; else navigator.clipboard.writeText(location.href).then(() => toast('লিংক কপি হয়েছে')); });
+      $('big').style.display = 'none'; return;
+    }
     if (!r.ok) { $('title').textContent = 'ভিডিও পাওয়া যায়নি'; return; }
     const j = await r.json();
     sessionId = j.sessionId; duration = j.video.duration; wmInfo = j.watermark;
