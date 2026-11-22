@@ -26,7 +26,7 @@
   let seg = null, sessWatch = 0, lastPos = 0;
   function closeSegment(keepOpen) {
     if (!seg) return;
-    if (seg.to > seg.from || seg.wall > 0) queue.push({ type: 'tick', pos: seg.to, at: Date.now(), d: { from: +seg.from.toFixed(2), to: +seg.to.toFixed(2), wall: +seg.wall.toFixed(2) } });
+    if (seg.to > seg.from || seg.wall > 0) queue.push({ type: 'tick', pos: seg.to, at: Date.now(), d: { from: +seg.from.toFixed(2), to: +seg.to.toFixed(2), wall: +Math.max(seg.wall, (seg.to - seg.from) / (v.playbackRate || 1)).toFixed(2) } });
     seg = keepOpen && !v.paused ? { from: seg.to, to: seg.to, wall: 0, t: Date.now() } : null;
   }
   setInterval(() => {
@@ -170,7 +170,8 @@
 
   // ---------------- media events → tracking ----------------
   v.addEventListener('play', () => {
-    hasPlayed = true; player.classList.remove('paused'); $('pp').textContent = '❚❚'; $('big').style.display = 'none';
+    hasPlayed = true; if (!seg) seg = { from: v.currentTime, to: v.currentTime, wall: 0, t: Date.now() }; // start counting right away
+    player.classList.remove('paused'); $('pp').textContent = '❚❚'; $('big').style.display = 'none';
     if (pauseStart) { log('resume', { paused: +((Date.now() - pauseStart) / 1000).toFixed(1), at: +pausePos.toFixed(1) }); pauseStart = null; }
     else log('play');
   });
