@@ -48,6 +48,12 @@ body{background:#0c0d16;color:#e8e9f3;-webkit-user-select:none;user-select:none;
 .mystat{background:#15162a;border:1px solid #26284a;border-radius:12px;padding:12px 16px;min-width:220px}
 .mystat .bar{background:#26284a;margin-top:6px}
 @media (max-width:640px){.vol,#back,#fwd{display:none}.ctrl{padding:20px 8px 6px}.cb{padding:5px 6px;font-size:15px}.page{padding:12px 0 40px}.player{border-radius:0}.info,.note{margin-left:14px;margin-right:14px}}
+.gate{position:absolute;inset:0;z-index:12;display:none;align-items:center;justify-content:center;background:rgba(8,9,18,.88);padding:14px;-webkit-user-select:text;user-select:text}
+.gate.show{display:flex}
+.gatebox{width:100%;max-width:360px;background:#15162a;border:1px solid #2a2c50;border-radius:14px;padding:22px;color:#fff}
+.gatebox .input{background:#0f1020;border-color:#2a2c50;color:#fff;margin-bottom:10px}
+.gatebox .err{color:#ff8a8a}
+@media (max-width:640px){.player:has(.gate.show){aspect-ratio:auto;min-height:440px}}
 @media print{body{display:none!important}}
 </style>
 </head>
@@ -63,6 +69,16 @@ body{background:#0c0d16;color:#e8e9f3;-webkit-user-select:none;user-select:none;
     <div class="wm-move" id="wm"></div>
     <div class="shield" id="shield"></div>
     <div class="bigplay" id="big"><span>▶</span></div>
+    <div class="gate" id="gate"><form class="gatebox" id="gateForm">
+      <div style="font-size:13px;color:#a5a8c8">আপনাকে একটি ভিডিও শেয়ার করা হয়েছে</div>
+      <h2 id="gateTitle" style="margin:4px 0 14px;font-size:19px"></h2>
+      <input class="input" name="name" placeholder="আপনার নাম" required autocomplete="name">
+      <input class="input" name="email" type="email" placeholder="ইমেইল" required autocomplete="email">
+      <input class="input" name="phone" type="tel" placeholder="ফোন নম্বর" required autocomplete="tel">
+      <div class="err" id="gateErr"></div>
+      <button class="btn" style="width:100%;justify-content:center">ভিডিও দেখুন ▶</button>
+      <div style="font-size:12px;color:#a5a8c8;margin-top:10px">কোনো পাসওয়ার্ড লাগবে না। পরের বার একই ইমেইল ও ফোন দিলেই ঢুকতে পারবেন।</div>
+    </form></div>
     <div class="ov" id="ov"><div class="ic" id="ovIc"></div><div id="ovMsg" style="max-width:420px"></div><button class="btn" id="ovBtn">আবার চালান</button></div>
     <div class="ctrl" id="ctrl">
       <div class="seek" id="seek"><div class="track"></div><div class="buf" id="buf"></div><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>

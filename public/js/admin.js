@@ -35,6 +35,57 @@ function rewatchCell(p, d) {
   return `${r >= 1 ? dur(r) : '—'}${ti.max >= 2 ? `<div class="muted" style="font-size:12px">${fmt(ti.from)}–${fmt(ti.to)} অংশ ${bn(ti.max)} বার</div>` : ''}`;
 }
 
+const shareUrl = (t) => `${location.origin}/v/${t}`;
+window.copyLink = async (t) => {
+  try { await navigator.clipboard.writeText(shareUrl(t)); toast('লিংক কপি হয়েছে, এখন যাকে খুশি পাঠান'); }
+  catch { modal(`<h2>শেয়ার লিংক</h2><input class="input" value="${shareUrl(t)}" onclick="this.select()" readonly>`); }
+};
+
+// Share link + who has access to one video
+async function renderSharePanel(el, v) {
+  const list = await api(`/api/admin/videos/${v.id}/access`);
+  const students = await api('/api/admin/students');
+  const have = new Set(list.map(a => a.student_id));
+  const SRC = { link: 'লিংক দিয়ে', admin: 'আপনি দিয়েছেন', legacy: 'আগে থেকে' };
+  el.innerHTML = `<div class="cols" style="margin-bottom:18px">
+    <div class="card" style="padding:18px">
+      <b>🔗 শেয়ার লিংক</b> ${v.share_enabled ? '<span class="pill ok">চালু</span>' : '<span class="pill bad">বন্ধ</span>'}
+      <p class="muted" style="font-size:13px;margin:6px 0 12px">ভিডিওটি প্রাইভেট। শুধু এই লিংক যারা পাবে, তারা নাম, ইমেইল ও ফোন দিয়ে এটি দেখতে পারবে। লিংক ছাড়া কেউ ভিডিওটি খুঁজে পাবে না।</p>
+      <div style="display:flex;gap:8px"><input class="input" id="shareUrl" value="${shareUrl(v.share_token)}" readonly onclick="this.select()" style="${v.share_enabled ? '' : 'opacity:.5;text-decoration:line-through'}">
+        <button class="btn" id="cp" ${v.share_enabled ? '' : 'disabled'}>কপি</button></div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn ghost sm" id="tog">${v.share_enabled ? '⛔ লিংক বন্ধ করুন' : '✅ লিংক চালু করুন'}</button>
+        <button class="btn ghost sm" id="regen">🔄 নতুন লিংক বানান (পুরানোটা আর কাজ করবে না)</button>
+      </div>
+    </div>
+    <div class="card" style="padding:18px">
+      <b>➕ নির্দিষ্ট কাউকে অনুমতি দিন</b>
+      <p class="muted" style="font-size:13px;margin:6px 0 10px">অনুমতি পেলে সে মূল পেজে লগইন করলেই এই ভিডিওটি দেখতে পাবে, লিংক লাগবে না।</p>
+      <form id="gf1" style="display:flex;gap:8px"><select class="input" name="student_id" required><option value="">আগের স্টুডেন্ট বেছে নিন…</option>
+        ${students.filter(x => !have.has(x.id)).map(x => `<option value="${x.id}">${esc(x.name)} · ${esc(x.phone)}</option>`).join('')}</select><button class="btn">দিন</button></form>
+      <div class="muted" style="font-size:12.5px;margin:10px 0 6px">অথবা নতুন কাউকে:</div>
+      <form id="gf2" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:6px"><input class="input" name="name" placeholder="নাম" required><input class="input" name="email" type="email" placeholder="ইমেইল" required><input class="input" name="phone" placeholder="ফোন" required><button class="btn">দিন</button></form>
+      <div class="err" id="gerr"></div>
+    </div>
+  </div>
+  <div class="card panel" style="margin-bottom:18px"><h3>🔑 যাদের এই ভিডিও দেখার অনুমতি আছে <span class="pill">${bn(list.length)} জন</span></h3><div class="scroll"><table>
+    <tr><th>নাম</th><th>ফোন / ইমেইল</th><th>কীভাবে পেয়েছে</th><th>কবে</th><th></th></tr>
+    ${list.map(a => `<tr><td><a href="#/student/${a.student_id}">${esc(a.name)}</a></td><td>${esc(a.phone)}<div class="muted" style="font-size:12px">${esc(a.email)}</div></td>
+      <td><span class="pill ${a.source === 'link' ? 'brand' : ''}">${SRC[a.source] || a.source}</span></td><td class="muted">${dt(a.granted_at)}</td>
+      <td><button class="btn danger sm" onclick="revoke(${a.student_id}, ${v.id})">অনুমতি বাতিল</button></td></tr>`).join('') || '<tr><td colspan=5 class="muted">এখনো কেউ নেই। লিংক শেয়ার করুন বা উপরে থেকে অনুমতি দিন।</td></tr>'}
+  </table></div></div>`;
+  $('#cp', el).onclick = () => copyLink(v.share_token);
+  $('#tog', el).onclick = async () => { await post(`/api/admin/videos/${v.id}/share`, { enabled: !v.share_enabled }); route(); };
+  $('#regen', el).onclick = () => confirmBox('পুরানো লিংকটি আর কাজ করবে না। যারা আগে ঢুকেছে তাদের অনুমতি থাকবে (চাইলে নিচে থেকে বাতিল করতে পারবেন)।',
+    async () => { await post(`/api/admin/videos/${v.id}/share`, { regenerate: true }); route(); toast('নতুন লিংক তৈরি হয়েছে'); }, 'হ্যাঁ, নতুন লিংক');
+  const grant = async (body) => { try { await post('/api/admin/access', { video_id: v.id, ...body }); toast('অনুমতি দেওয়া হয়েছে'); route(); } catch (e) { $('#gerr', el).textContent = e.message; } };
+  $('#gf1', el).onsubmit = (e) => { e.preventDefault(); grant(Object.fromEntries(new FormData(e.target))); };
+  $('#gf2', el).onsubmit = (e) => { e.preventDefault(); grant(Object.fromEntries(new FormData(e.target))); };
+}
+window.revoke = (studentId, videoId) => confirmBox('এই স্টুডেন্ট আর এই ভিডিওটি দেখতে পারবে না। (আগের দেখার রিপোর্ট থেকে যাবে)', async () => {
+  await api('/api/admin/access', { method: 'DELETE', body: JSON.stringify({ student_id: studentId, video_id: videoId }) }); route();
+}, 'হ্যাঁ, বাতিল');
+
 async function api(url, opts = {}) {
   const r = await fetch(url, { ...opts, headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {} });
   const j = await r.json().catch(() => ({}));
@@ -135,9 +186,9 @@ async function viewVideos(main) {
         <button class="btn danger sm" onclick="delClass(${c.id})">মুছুন</button></div></div>
         ${vs.map(v => `<div class="vrow"><div class="vthumb" style="background-image:url(/api/thumb/${v.id})"></div>
           <div><b>${esc(v.title)}</b>
-            <div class="vmeta">${v.status === 'ready' ? `<span>⏱ ${fmt(v.duration)}</span><span>👥 ${bn(v.viewers)} জন দেখেছে</span><span>👁 মোট ${bn(v.views)} বার</span><span>✓ ${bn(v.completed)} জন শেষ করেছে</span><span>গড় ${pct(v.avg_percent)}</span>`
+            <div class="vmeta">${v.status === 'ready' ? `<span>⏱ ${fmt(v.duration)}</span><span>👥 ${bn(v.viewers)} জন দেখেছে</span><span>👁 মোট ${bn(v.views)} বার</span><span>🔑 ${bn(v.access_count)} জনের অনুমতি</span>${v.share_enabled ? '' : '<span class="pill bad">লিংক বন্ধ</span>'}<span>✓ ${bn(v.completed)} জন শেষ করেছে</span><span>গড় ${pct(v.avg_percent)}</span>`
               : v.status === 'processing' ? `<span class="pill warn">⏳ প্রসেস হচ্ছে ${v.job != null ? bn(v.job) + '%' : ''}</span>` : `<span class="pill bad">সমস্যা: ${esc(v.error)}</span>`}</div></div>
-          <div style="display:flex;gap:6px">${v.status === 'ready' ? `<a class="btn ghost sm" href="#/video/${v.id}">রিপোর্ট</a>` : ''}<button class="btn danger sm" onclick="delVideo(${v.id})">মুছুন</button></div></div>`).join('')
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.status === 'ready' ? `${v.share_enabled ? `<button class="btn sm" onclick="copyLink('${v.share_token}')">🔗 লিংক কপি</button>` : ''}<a class="btn ghost sm" href="#/video/${v.id}">শেয়ার ও রিপোর্ট</a>` : ''}<button class="btn danger sm" onclick="delVideo(${v.id})">মুছুন</button></div></div>`).join('')
           || '<div class="muted" style="padding:16px 18px">এই ক্লাসে এখনো কোনো ভিডিও নেই</div>'}</div>`;
     }).join('') || '<div class="card" style="padding:30px;text-align:center" class="muted">প্রথমে একটি ক্লাস তৈরি করুন (যেমন: ক্লাস ১)</div>'}`;
   $('#addClass').onclick = () => {
@@ -154,8 +205,8 @@ window.renameClass = async (id, name) => {
 };
 window.delClass = (id) => confirmBox('এই ক্লাস এবং এর সব ভিডিও ও ডাটা মুছে যাবে।', async () => { await api('/api/admin/classes/' + id, { method: 'DELETE' }); route(); });
 window.delVideo = (id) => confirmBox('এই ভিডিও এবং এর সব দেখার ডাটা মুছে যাবে।', async () => { await api('/api/admin/videos/' + id, { method: 'DELETE' }); route(); });
-function confirmBox(msg, fn) {
-  const m = modal(`<h2>নিশ্চিত?</h2><p class="muted">${esc(msg)}</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="no">না</button><button class="btn danger" id="yes">হ্যাঁ, মুছুন</button></div>`);
+function confirmBox(msg, fn, yes = 'হ্যাঁ, মুছুন') {
+  const m = modal(`<h2>নিশ্চিত?</h2><p class="muted">${esc(msg)}</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn ghost" id="no">না</button><button class="btn danger" id="yes">${esc(yes)}</button></div>`);
   $('#no', m).onclick = () => m.remove(); $('#yes', m).onclick = async () => { m.remove(); await fn(); };
 }
 function uploadModal(classes) {
@@ -205,7 +256,8 @@ async function viewStudents(main) {
 }
 
 async function viewStudent(main, id) {
-  const { student: s, progress, sessions } = await api('/api/admin/students/' + id);
+  const { student: s, progress, sessions, access } = await api('/api/admin/students/' + id);
+  const allVideos = (await api('/api/admin/videos')).filter(x => x.status === 'ready');
   const totalWatch = progress.reduce((a, p) => a + p.watch_time, 0);
   const totPauses = sessions.reduce((a, x) => a + x.pauses, 0), totSeeks = sessions.reduce((a, x) => a + x.seeks, 0);
   const totTabs = sessions.reduce((a, x) => a + x.tab_switches, 0), totBlocked = sessions.reduce((a, x) => a + x.blocked_actions, 0);
@@ -233,6 +285,14 @@ async function viewStudent(main, id) {
       <td>${dur(p.unique_seconds)}<div class="muted" style="font-size:12px">মোট ${dur(p.watch_time)}</div></td><td>${fmt(p.last_position)}</td><td class="muted">${ago(p.last_watched)}</td></tr>`).join('')
       || '<tr><td colspan=9 class="muted">এখনো কোনো ভিডিও দেখেনি</td></tr>'}
   </table></div></div>
+  <div class="card panel" style="margin-bottom:18px"><h3>🔑 যে ভিডিওগুলো দেখার অনুমতি আছে <span class="pill">${bn(access.length)}টি</span></h3>
+    <div style="padding:12px 18px;border-bottom:1px solid var(--line)"><form id="ga" style="display:flex;gap:8px;max-width:560px">
+      <select class="input" name="video_id" required><option value="">ভিডিও বেছে নিন…</option>${allVideos.filter(x => !access.some(a => a.video_id === x.id)).map(x => `<option value="${x.id}">${esc(x.class_name)} · ${esc(x.title)}</option>`).join('')}</select>
+      <button class="btn">অনুমতি দিন</button></form></div>
+    <div class="scroll"><table><tr><th>ভিডিও</th><th>কীভাবে পেয়েছে</th><th>কবে</th><th></th></tr>
+    ${access.map(a => `<tr><td><b>${esc(a.title)}</b><div class="muted" style="font-size:12px">${esc(a.class_name)}</div></td><td><span class="pill ${a.source === 'link' ? 'brand' : ''}">${({ link: 'লিংক দিয়ে', admin: 'আপনি দিয়েছেন', legacy: 'আগে থেকে' })[a.source] || a.source}</span></td>
+      <td class="muted">${dt(a.granted_at)}</td><td><button class="btn danger sm" onclick="revoke(${s.id}, ${a.video_id})">অনুমতি বাতিল</button></td></tr>`).join('') || '<tr><td colspan=4 class="muted">কোনো ভিডিওর অনুমতি নেই</td></tr>'}
+    </table></div></div>
   <div class="card panel"><h3>সব সেশন <span class="muted" style="font-weight:400;font-size:13px">ক্লিক করলে প্রতিটি অ্যাকশনের টাইমলাইন দেখাবে</span></h3><div class="scroll"><table>
     <tr><th>কখন</th><th>ভিডিও</th><th>দেখেছে</th><th>পজ</th><th>সিক</th><th>ট্যাব বদল</th><th>সর্বোচ্চ স্পিড</th><th>ডিভাইস</th><th>ব্লকড</th></tr>
     ${sessions.map(x => `<tr class="click" onclick="openSession(${x.id})"><td>${dt(x.started_at)}<div class="muted" style="font-size:12px">${fmt(x.start_pos)} → ${fmt(x.end_pos)}</div></td><td>${esc(x.title)} ${x.ended ? '<span class="pill ok">শেষ</span>' : ''}</td><td>${dur(x.watch_time)}</td>
@@ -240,6 +300,7 @@ async function viewStudent(main, id) {
       <td>${esc(x.device)}<div class="muted" style="font-size:12px">${esc(x.browser)} · ${esc(x.os)}</div></td><td>${x.blocked_actions ? `<span class="pill bad">${bn(x.blocked_actions)}</span>` : '—'}</td></tr>`).join('')
       || '<tr><td colspan=9 class="muted">কোনো সেশন নেই</td></tr>'}
   </table></div></div>`;
+  $('#ga').onsubmit = async (e) => { e.preventDefault(); await post('/api/admin/access', { student_id: s.id, video_id: Number(new FormData(e.target).get('video_id')) }); toast('অনুমতি দেওয়া হয়েছে'); route(); };
   $('#blk').onclick = async () => { await post('/api/admin/students/' + s.id, { blocked: !s.blocked }, 'PATCH'); route(); };
 }
 
@@ -289,7 +350,8 @@ async function viewVideoReport(main, id) {
   const mx = Math.max(1, ...heat), pmx = Math.max(1, ...pauseHeat), rmx = Math.max(0.01, ...rewatchHeat);
   const avg = rows.length ? rows.reduce((a, r) => a + r.percent, 0) / rows.length : 0;
   main.innerHTML = `<div class="head"><a href="#/videos" class="btn ghost sm">← ক্লাস ও ভিডিও</a></div>
-  <div class="head"><div><h1>${esc(v.title)}</h1><div class="muted">${esc(v.class_name)} · ${fmt(v.duration)}</div></div></div>
+  <div class="head"><div><h1>${esc(v.title)}</h1><div class="muted">${esc(v.class_name)} · ${fmt(v.duration)} · 🔒 প্রাইভেট ভিডিও</div></div></div>
+  <div id="sharePanel"></div>
   <div class="stats">
     <div class="card stat"><div class="k">দেখেছে</div><div class="v">${bn(rows.length)} জন</div></div>
     <div class="card stat"><div class="k">শেষ করেছে</div><div class="v">${bn(rows.filter(r => r.completed).length)} জন</div></div>
@@ -313,6 +375,7 @@ async function viewVideoReport(main, id) {
       <td>${dur(r.unique_seconds)}<div class="muted" style="font-size:12px">মোট ${dur(r.watch_time)}</div></td><td>${bn(r.pauses)}</td><td>${bn(r.seeks)}</td><td>${bn(r.tab_switches)}</td><td class="muted">${ago(r.last_watched)}</td></tr>`).join('')
       || '<tr><td colspan=11 class="muted">এখনো কেউ দেখেনি</td></tr>'}
   </table></div></div>`;
+  await renderSharePanel($('#sharePanel'), v);
 }
 
 // ---------------- boot ----------------

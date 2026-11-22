@@ -59,9 +59,22 @@ CREATE TABLE IF NOT EXISTS progress(
 for (const [t, c] of [['progress', 'media_seconds REAL DEFAULT 0'], ['progress', 'full_views INTEGER DEFAULT 0'],
   ['progress', "buckets TEXT DEFAULT '[]'"], ['sessions', 'media_seconds REAL DEFAULT 0'],
   ['sessions', 'mask TEXT'], ['sessions', 'native INTEGER DEFAULT 0'], ['sessions', 'key_fetches INTEGER DEFAULT 0'],
-  ['sessions', 'playlist_fetches INTEGER DEFAULT 0'], ['sessions', 'stream_blocked INTEGER DEFAULT 0']]) {
+  ['sessions', 'playlist_fetches INTEGER DEFAULT 0'], ['sessions', 'stream_blocked INTEGER DEFAULT 0'],
+  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1']]) {
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* exists */ }
 }
+// Access control: every video is private. A student can watch a video only if they have a row here,
+// given either by opening the video's share link ("link") or by the admin ("admin").
+db.exec(`CREATE TABLE IF NOT EXISTS access(
+  student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+  video_id INTEGER REFERENCES videos(id) ON DELETE CASCADE,
+  source TEXT, granted_at INTEGER, PRIMARY KEY(student_id, video_id));`);
+const newShareToken = () => crypto.randomBytes(9).toString('base64url');
+for (const v of db.prepare('SELECT id FROM videos WHERE share_token IS NULL').all())
+  db.prepare('UPDATE videos SET share_token=? WHERE id=?').run(newShareToken(), v.id);
+// keep access for students who were already watching before permissions existed
+db.exec(`INSERT OR IGNORE INTO access(student_id, video_id, source, granted_at)
+  SELECT student_id, video_id, 'legacy', first_watched FROM progress`);
 const NB = 100;           // the video is split into 100 equal parts to count how many times each part was watched
 const VIEW_MIN = 5;       // a session counts as a "view" after 5+ seconds of watching
 const q = (sql) => db.prepare(sql);
@@ -153,15 +166,32 @@ app.get('/api/catalog', requireStudent, (req, res) => {
   const classes = q('SELECT id,name FROM classes ORDER BY sort,id').all();
   const vids = q(`SELECT v.id,v.class_id,v.title,v.description,v.duration,
       p.percent,p.completed,p.last_position
-      FROM videos v LEFT JOIN progress p ON p.video_id=v.id AND p.student_id=?
+      FROM videos v JOIN access a ON a.video_id=v.id AND a.student_id=?
+      LEFT JOIN progress p ON p.video_id=v.id AND p.student_id=a.student_id
       WHERE v.status='ready' ORDER BY v.id`).all(req.student.id);
   res.json(classes.map(c => ({ ...c, videos: vids.filter(v => v.class_id === c.id) })));
+});
+
+// ---------- Share links ----------
+app.get('/api/share/:token', (req, res) => {
+  const v = q("SELECT id,title,duration FROM videos WHERE share_token=? AND share_enabled=1 AND status='ready'").get(String(req.params.token));
+  if (!v) return res.status(404).json({ error: 'এই লিংকটি আর কাজ করছে না। যিনি লিংক দিয়েছেন তার সাথে যোগাযোগ করুন।' });
+  const s = currentStudent(req);
+  res.json({ video: v, me: s ? { name: s.name, email: s.email, phone: s.phone } : null });
+});
+app.post('/api/share/:token/claim', requireStudent, (req, res) => {
+  const v = q("SELECT id FROM videos WHERE share_token=? AND share_enabled=1 AND status='ready'").get(String(req.params.token));
+  if (!v) return res.status(404).json({ error: 'এই লিংকটি আর কাজ করছে না।' });
+  q("INSERT OR IGNORE INTO access(student_id,video_id,source,granted_at) VALUES(?,?,'link',?)").run(req.student.id, v.id, now());
+  res.json({ videoId: v.id });
 });
 
 // ---------- Secure streaming (AES-128 HLS + signed, user-bound URLs) ----------
 const vdir = (id) => path.join(DATA, 'videos', String(Number(id)));
 
+const hasAccess = (studentId, videoId) => !!q('SELECT 1 FROM access WHERE student_id=? AND video_id=?').get(studentId, videoId);
 app.get('/api/thumb/:id', requireStudentOrAdmin, (req, res) => {
+  if (req.student && !hasAccess(req.student.id, Number(req.params.id))) return res.status(403).end();
   const f = path.join(vdir(req.params.id), 'thumb.jpg');
   if (!fs.existsSync(f)) return res.status(404).end();
   res.set('Cache-Control', 'private, max-age=3600'); res.sendFile(f);
@@ -169,6 +199,7 @@ app.get('/api/thumb/:id', requireStudentOrAdmin, (req, res) => {
 function requireStudentOrAdmin(req, res, next) {
   const a = verify(req.cookies.aid);
   if (a && a.t === 'a') return next();
+  // (students fall through and get req.student set)
   return requireStudent(req, res, next);
 }
 
@@ -197,7 +228,7 @@ function streamSession(req, res, needToken = true) {
   const p = needToken ? verify(req.query.tk) : null;
   const sid = needToken ? p && p.ss : Number(req.query.s);
   const sess = sid && q('SELECT * FROM sessions WHERE id=?').get(sid);
-  const ok = s && sess && sess.student_id === s.id && sess.video_id === Number(req.params.id) && !sess.stream_blocked &&
+  const ok = s && sess && sess.student_id === s.id && hasAccess(s.id, sess.video_id) && sess.video_id === Number(req.params.id) && !sess.stream_blocked &&
     (!needToken || (p.t === 'v' && p.v === sess.video_id && p.s === s.id)) && sameOriginFetch(req);
   if (!ok) { res.status(403).end(); return null; }
   return sess;
@@ -257,6 +288,7 @@ app.post('/api/track/start', requireStudent, (req, res) => {
   if (badClient(req)) return res.status(403).json({ error: 'browser' });
   const v = q("SELECT * FROM videos WHERE id=? AND status='ready'").get(req.body.videoId);
   if (!v) return res.status(404).json({ error: 'ভিডিও পাওয়া যায়নি' });
+  if (!hasAccess(req.student.id, v.id)) return res.status(403).json({ error: 'noaccess' });
   const ua = String(req.get('user-agent') || '').slice(0, 400);
   const { device, browser, os } = parseUA(ua);
   const p = q('SELECT last_position,percent,completed FROM progress WHERE student_id=? AND video_id=?').get(req.student.id, v.id);
@@ -408,7 +440,8 @@ let encodeQueue = Promise.resolve();
 app.get('/api/admin/videos', requireAdmin, (req, res) => {
   const rows = q(`SELECT v.*, c.name class_name, COUNT(p.student_id) viewers, COALESCE(AVG(p.percent),0) avg_percent,
       COALESCE(SUM(p.completed),0) completed, COALESCE(SUM(p.watch_time),0) watch_time,
-      (SELECT COUNT(*) FROM sessions se WHERE se.video_id=v.id AND se.watch_time>=5) views
+      (SELECT COUNT(*) FROM sessions se WHERE se.video_id=v.id AND se.watch_time>=5) views,
+      (SELECT COUNT(*) FROM access a WHERE a.video_id=v.id) access_count
       FROM videos v JOIN classes c ON c.id=v.class_id LEFT JOIN progress p ON p.video_id=v.id
       GROUP BY v.id ORDER BY c.sort, v.id`).all();
   res.json(rows.map(r => ({ ...r, job: jobs.get(r.id) ?? null })));
@@ -432,8 +465,8 @@ app.post('/api/admin/videos', requireAdmin, upload.single('file'), (req, res) =>
   const cls = q('SELECT id FROM classes WHERE id=?').get(req.body.class_id);
   if (!cls) { fs.rmSync(req.file.path, { force: true }); return res.status(400).json({ error: 'ক্লাস সিলেক্ট করুন' }); }
   const title = String(req.body.title || req.file.originalname).trim().slice(0, 150);
-  const r = q('INSERT INTO videos(class_id,title,description,status,created_at) VALUES(?,?,?,?,?)')
-    .run(cls.id, title, String(req.body.description || '').slice(0, 2000), 'processing', now());
+  const r = q('INSERT INTO videos(class_id,title,description,status,created_at,share_token) VALUES(?,?,?,?,?,?)')
+    .run(cls.id, title, String(req.body.description || '').slice(0, 2000), 'processing', now(), newShareToken());
   const id = Number(r.lastInsertRowid);
   jobs.set(id, 0);
   encodeQueue = encodeQueue.then(() => processVideo(id, req.file.path)); // one encode at a time
@@ -496,13 +529,51 @@ app.get('/api/admin/students/:id', requireAdmin, (req, res) => {
       JOIN classes c ON c.id=v.class_id WHERE p.student_id=? ORDER BY p.last_watched DESC`).all(s.id);
   const sessions = q(`SELECT se.*, v.title FROM sessions se JOIN videos v ON v.id=se.video_id WHERE se.student_id=?
       ORDER BY se.started_at DESC LIMIT 200`).all(s.id);
-  res.json({ student: s, progress, sessions });
+  const access = q(`SELECT a.*, v.title, c.name class_name FROM access a JOIN videos v ON v.id=a.video_id JOIN classes c ON c.id=v.class_id
+      WHERE a.student_id=? ORDER BY a.granted_at DESC`).all(s.id);
+  res.json({ student: s, progress, sessions, access });
 });
 app.patch('/api/admin/students/:id', requireAdmin, (req, res) => {
   q('UPDATE students SET blocked=? WHERE id=?').run(req.body.blocked ? 1 : 0, req.params.id); res.json({ ok: true });
 });
 app.delete('/api/admin/students/:id', requireAdmin, (req, res) => {
   q('DELETE FROM students WHERE id=?').run(req.params.id); res.json({ ok: true });
+});
+// share link controls
+app.post('/api/admin/videos/:id/share', requireAdmin, (req, res) => {
+  const v = q('SELECT * FROM videos WHERE id=?').get(req.params.id);
+  if (!v) return res.status(404).end();
+  if (req.body.regenerate) q('UPDATE videos SET share_token=? WHERE id=?').run(newShareToken(), v.id);
+  if (typeof req.body.enabled === 'boolean') q('UPDATE videos SET share_enabled=? WHERE id=?').run(req.body.enabled ? 1 : 0, v.id);
+  res.json(q('SELECT share_token, share_enabled FROM videos WHERE id=?').get(v.id));
+});
+app.get('/api/admin/videos/:id/access', requireAdmin, (req, res) => {
+  res.json(q(`SELECT a.*, s.name, s.email, s.phone FROM access a JOIN students s ON s.id=a.student_id
+      WHERE a.video_id=? ORDER BY a.granted_at DESC`).all(req.params.id));
+});
+// give a student access to a video: existing student by id, or a new/existing one by name+email+phone
+app.post('/api/admin/access', requireAdmin, (req, res) => {
+  const vid = Number(req.body.video_id);
+  if (!q('SELECT 1 FROM videos WHERE id=?').get(vid)) return res.status(404).json({ error: 'ভিডিও পাওয়া যায়নি' });
+  let sid = Number(req.body.student_id) || null;
+  if (!sid) {
+    const name = String(req.body.name || '').trim().slice(0, 80), email = normEmail(req.body.email), phone = normPhone(req.body.phone);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || phone.length < 10) return res.status(400).json({ error: 'সঠিক ইমেইল ও ফোন নম্বর দিন' });
+    const byEmail = q('SELECT * FROM students WHERE email=?').get(email), byPhone = q('SELECT * FROM students WHERE phone=?').get(phone);
+    if (byEmail && byPhone && byEmail.id === byPhone.id) sid = byEmail.id;
+    else if (byEmail || byPhone) return res.status(409).json({ error: 'এই ইমেইল বা ফোন অন্য একজন স্টুডেন্টের নামে আছে। তালিকা থেকে বেছে নিন।' });
+    else {
+      if (name.length < 2) return res.status(400).json({ error: 'নাম দিন' });
+      sid = Number(q('INSERT INTO students(name,email,phone,created_at) VALUES(?,?,?,?)').run(name, email, phone, now()).lastInsertRowid);
+    }
+  }
+  if (!q('SELECT 1 FROM students WHERE id=?').get(sid)) return res.status(404).json({ error: 'স্টুডেন্ট পাওয়া যায়নি' });
+  q("INSERT OR IGNORE INTO access(student_id,video_id,source,granted_at) VALUES(?,?,'admin',?)").run(sid, vid, now());
+  res.json({ ok: true, student_id: sid });
+});
+app.delete('/api/admin/access', requireAdmin, (req, res) => {
+  q('DELETE FROM access WHERE student_id=? AND video_id=?').run(Number(req.body.student_id), Number(req.body.video_id));
+  res.json({ ok: true });
 });
 app.get('/api/admin/sessions/:id', requireAdmin, (req, res) => {
   const se = q(`SELECT se.*, v.title, v.duration, s.name student FROM sessions se JOIN videos v ON v.id=se.video_id
@@ -561,6 +632,7 @@ app.get('/js/watch.js', (req, res, next) => {
 });
 app.use('/vendor/hls.min.js', (req, res) => res.sendFile(require.resolve('hls.js/dist/hls.min.js')));
 app.use('/fonts', express.static(path.join(__dirname, 'node_modules/@fontsource/hind-siliguri/files'), { maxAge: '30d' }));
+app.get('/v/:token', (req, res) => res.sendFile(path.join(__dirname, 'public/watch.html')));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 // Mark videos stuck in processing (server restarted mid-encode) as errored

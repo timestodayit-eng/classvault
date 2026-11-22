@@ -3,7 +3,8 @@
   const v = $('v'), player = $('player');
   const fmt = (s) => { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
     return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
-  const videoId = Number(new URLSearchParams(location.search).get('v'));
+  let videoId = Number(new URLSearchParams(location.search).get('v'));
+  const shareToken = location.pathname.startsWith('/v/') ? decodeURIComponent(location.pathname.split('/')[2] || '') : null;
   let sessionId = null, duration = 0, wmInfo = null, hls = null, killed = false;
 
   // ---------------- event queue ----------------
@@ -39,10 +40,43 @@
   }, 1000);
 
   // ---------------- start ----------------
+  // ---------------- share link: ask name/email/phone, then unlock this one video ----------------
+  async function openShare() {
+    const r = await fetch('/api/share/' + encodeURIComponent(shareToken));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { $('title').textContent = 'লিংকটি কাজ করছে না'; $('big').style.display = 'none'; showOv('🔗', j.error || 'লিংকটি সঠিক নয়।'); return false; }
+    $('title').textContent = j.video.title; document.title = j.video.title + ' | ক্লাসভল্ট';
+    const claim = async () => {
+      const c = await fetch('/api/share/' + encodeURIComponent(shareToken) + '/claim', { method: 'POST' });
+      if (!c.ok) { showOv('🔗', 'লিংকটি কাজ করছে না।'); return false; }
+      videoId = (await c.json()).videoId; return true;
+    };
+    if (j.me) { $('gate').classList.remove('show'); return claim(); }
+    $('big').style.display = 'none';
+    $('gateTitle').textContent = j.video.title;
+    $('gate').classList.add('show');
+    return new Promise((resolve) => {
+      $('gateForm').onsubmit = async (e) => {
+        e.preventDefault(); $('gateErr').textContent = '';
+        const body = Object.fromEntries(new FormData(e.target));
+        const l = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const lj = await l.json().catch(() => ({}));
+        if (!l.ok) { $('gateErr').textContent = lj.error || 'সমস্যা হয়েছে'; return; }
+        $('gate').classList.remove('show'); $('big').style.display = '';
+        resolve(claim());
+      };
+    });
+  }
+
   async function start() {
+    if (shareToken && !(await openShare())) return;
     const r = await fetch('/api/track/start', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoId, screen: `${screen.width}x${screen.height}`, native: !(window.Hls && Hls.isSupported()) && !!v.canPlayType('application/vnd.apple.mpegurl') }) });
     if (r.status === 401) return (location.href = '/');
+    if (r.status === 403 && (await r.clone().json().catch(() => ({}))).error === 'noaccess') {
+      $('title').textContent = 'এই ভিডিও দেখার অনুমতি নেই'; $('big').style.display = 'none';
+      showOv('🔒', 'এই ভিডিওটি আপনাকে শেয়ার করা হয়নি। যিনি ভিডিও দেন, তার কাছ থেকে লিংক নিন।'); return;
+    }
     if (r.status === 403) {
       const chrome = /Android/i.test(navigator.userAgent) ? `intent://${location.host}${location.pathname}${location.search}#Intent;scheme=https;package=com.android.chrome;end` : null;
       $('title').textContent = 'এই অ্যাপে ভিডিও চলবে না';
@@ -172,7 +206,7 @@
   // ---------------- anti-piracy deterrents ----------------
   document.addEventListener('contextmenu', (e) => { e.preventDefault(); log('context_menu'); });
   document.addEventListener('dragstart', (e) => e.preventDefault());
-  document.addEventListener('selectstart', (e) => e.preventDefault());
+  document.addEventListener('selectstart', (e) => { if (!/INPUT|TEXTAREA/.test(e.target.tagName || '')) e.preventDefault(); });
   document.addEventListener('copy', (e) => { e.preventDefault(); log('copy_attempt'); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { log('tab_hidden'); forcePause('tab_hidden'); flush(true); }

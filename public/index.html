@@ -121,7 +121,7 @@ async function renderCatalog(me) {
             </div>
           </a>`).join('')}
         </div>
-      </section>`).join('') || '<div class="card empty muted">এখনো কোনো ভিডিও আপলোড হয়নি।</div>'}
+      </section>`).join('') || '<div class="card empty muted">🔒 এখনো আপনাকে কোনো ভিডিও শেয়ার করা হয়নি।<br>শিক্ষকের দেওয়া ভিডিও লিংকে ক্লিক করলে ভিডিওটি এখানে চলে আসবে।</div>'}
     </div>
   </div>`;
   $('#out').onclick = async () => { await api('/api/logout', {}); renderLogin(); };
