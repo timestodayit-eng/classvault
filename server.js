@@ -136,18 +136,30 @@ const normPhone = (p) => { let d = String(p || '').replace(/\D/g, ''); if (d.sta
 // Companies students can pick at login (admin can filter reports by these).
 const COMPANIES = ['Creative International', 'Coastal Manpower', 'SM Enterprise'];
 app.get('/api/companies', (req, res) => res.json(COMPANIES));
+// All sign-up fields are required and checked here (the browser checks too, but that can be bypassed).
+// Phone: Bangladeshi mobile 01XXXXXXXXX (+880 is accepted), or an international number written with + / 00.
+function checkSignup(body) {
+  const name = String(body.name || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  const email = normEmail(body.email), rawPhone = String(body.phone || '').trim(), phone = normPhone(rawPhone);
+  const company = String(body.company || '');
+  if (!name) return { error: 'আপনার নাম লিখুন' };
+  if (name.replace(/[^\p{L}]/gu, '').length < 3) return { error: 'পুরো নাম লিখুন (কমপক্ষে ৩ অক্ষর)' };
+  if (!email) return { error: 'ইমেইল লিখুন' };
+  if (!/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)*\.[a-z]{2,}$/i.test(email) || email.length > 120) return { error: 'সঠিক ইমেইল লিখুন (যেমন: name@gmail.com)' };
+  if (!rawPhone) return { error: 'ফোন নম্বর লিখুন' };
+  const bd = /^01[3-9]\d{8}$/.test(phone), intl = /^(\+|00)/.test(rawPhone) && !rawPhone.replace(/^(\+|00)/, '').startsWith('880') && phone.length >= 8 && phone.length <= 15;
+  if (!bd && !intl) return { error: 'সঠিক মোবাইল নম্বর লিখুন (যেমন: 01712345678, বিদেশি হলে +60…)' };
+  if (!company) return { error: 'আপনি কোন কোম্পানির, সেটা বেছে নিন' };
+  if (!COMPANIES.includes(company)) return { error: 'তালিকা থেকে কোম্পানি বেছে নিন' };
+  return { name, email, phone: intl ? '+' + rawPhone.replace(/^(\+|00)/, '').replace(/\D/g, '') : phone, company };
+}
 app.post('/api/login', (req, res) => {
-  const name = String(req.body.name || '').trim().slice(0, 80);
-  const email = normEmail(req.body.email);
-  const phone = normPhone(req.body.phone);
-  if (name.length < 2) return res.status(400).json({ error: 'সঠিক নাম লিখুন' });
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'সঠিক ইমেইল লিখুন' });
-  if (phone.length < 10 || phone.length > 15) return res.status(400).json({ error: 'সঠিক ফোন নম্বর লিখুন' });
-  const company = String(req.body.company || '');
-  if (!COMPANIES.includes(company)) return res.status(400).json({ error: 'আপনার কোম্পানি বেছে নিন' });
+  const chk = checkSignup(req.body);
+  if (chk.error) return res.status(400).json({ error: chk.error });
+  const { name, email, phone, company } = chk;
 
   const byEmail = q('SELECT * FROM students WHERE email=?').get(email);
-  const byPhone = q('SELECT * FROM students WHERE phone=?').get(phone);
+  const byPhone = q('SELECT * FROM students WHERE phone=? OR phone=?').get(phone, phone.replace('+', ''));
   let student;
   if (byEmail && byPhone && byEmail.id === byPhone.id) student = byEmail;
   else if (byEmail || byPhone) {
@@ -588,14 +600,14 @@ app.post('/api/admin/access', requireAdmin, (req, res) => {
   if (!q('SELECT 1 FROM videos WHERE id=?').get(vid)) return res.status(404).json({ error: 'ভিডিও পাওয়া যায়নি' });
   let sid = Number(req.body.student_id) || null;
   if (!sid) {
-    const name = String(req.body.name || '').trim().slice(0, 80), email = normEmail(req.body.email), phone = normPhone(req.body.phone);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || phone.length < 10) return res.status(400).json({ error: 'সঠিক ইমেইল ও ফোন নম্বর দিন' });
-    const byEmail = q('SELECT * FROM students WHERE email=?').get(email), byPhone = q('SELECT * FROM students WHERE phone=?').get(phone);
+    const chk = checkSignup(req.body);
+    if (chk.error) return res.status(400).json({ error: chk.error });
+    const { name, email, phone, company } = chk;
+    const byEmail = q('SELECT * FROM students WHERE email=?').get(email), byPhone = q('SELECT * FROM students WHERE phone=? OR phone=?').get(phone, phone.replace('+', ''));
     if (byEmail && byPhone && byEmail.id === byPhone.id) sid = byEmail.id;
     else if (byEmail || byPhone) return res.status(409).json({ error: 'এই ইমেইল বা ফোন অন্য একজন স্টুডেন্টের নামে আছে। তালিকা থেকে বেছে নিন।' });
     else {
-      if (name.length < 2) return res.status(400).json({ error: 'নাম দিন' });
-      sid = Number(q('INSERT INTO students(name,email,phone,created_at) VALUES(?,?,?,?)').run(name, email, phone, now()).lastInsertRowid);
+      sid = Number(q('INSERT INTO students(name,email,phone,company,created_at) VALUES(?,?,?,?,?)').run(name, email, phone, company, now()).lastInsertRowid);
     }
   }
   if (!q('SELECT 1 FROM students WHERE id=?').get(sid)) return res.status(404).json({ error: 'স্টুডেন্ট পাওয়া যায়নি' });
@@ -637,6 +649,37 @@ app.get('/api/admin/videos/:id/report', requireAdmin, (req, res) => {
   for (const e of q("SELECT pos FROM events WHERE video_id=? AND type='pause'").all(v.id))
     pauseHeat[Math.min(B - 1, Math.floor(e.pos / (v.duration || 1) * B))]++;
   res.json({ video: v, rows, heat, pauseHeat, rewatchHeat });
+});
+// ---------- Leaderboard (admin only — students never see it) ----------
+// Points = 1 per minute of NEW video watched (rewatching the same part doesn't add) + 20 for every video finished.
+// So nobody can climb by leaving a video looping; only real progress counts.
+const PTS_FINISH = 20;
+function leaderboard({ company = '', video = 0 } = {}) {
+  const where = ['s.blocked=0'], args = [];
+  if (company === '__none') where.push('s.company IS NULL'); else if (company) { where.push('s.company=?'); args.push(company); }
+  const rows = q(`SELECT s.id, s.name, s.company, COUNT(p.video_id) started, COALESCE(SUM(p.completed),0) finished,
+      COALESCE(AVG(p.percent),0) avg_percent, COALESCE(SUM(p.unique_seconds),0) unique_seconds, COALESCE(SUM(p.watch_time),0) watch_time,
+      MAX(p.last_watched) last_watched,
+      ROUND(COALESCE(SUM(p.unique_seconds),0)/60.0 + ${PTS_FINISH}*COALESCE(SUM(p.completed),0)) points
+      FROM students s JOIN progress p ON p.student_id=s.id ${video ? 'AND p.video_id=?' : ''}
+      WHERE ${where.join(' AND ')} GROUP BY s.id HAVING started>0
+      ORDER BY points DESC, finished DESC, unique_seconds DESC, last_watched ASC`).all(...(video ? [video] : []), ...args);
+  let rank = 0, prev = null;
+  rows.forEach((r, i) => { if (r.points !== prev) { rank = i + 1; prev = r.points; } r.rank = rank; });
+  return rows;
+}
+function companyBoard(video = 0) {
+  const by = {};
+  for (const r of leaderboard({ video })) {
+    const k = r.company || ''; const c = by[k] = by[k] || { company: k, students: 0, points: 0, finished: 0, unique_seconds: 0, pct: 0 };
+    c.students++; c.points += r.points; c.finished += r.finished; c.unique_seconds += r.unique_seconds; c.pct += r.avg_percent;
+  }
+  return Object.values(by).map(c => ({ ...c, avg_points: c.points / c.students, avg_percent: c.pct / c.students }))
+    .sort((a, b) => b.avg_points - a.avg_points);
+}
+app.get('/api/admin/leaderboard', requireAdmin, (req, res) => {
+  const video = Number(req.query.video) || 0;
+  res.json({ rows: leaderboard({ company: String(req.query.company || ''), video }), companies: companyBoard(video), ptsFinish: PTS_FINISH });
 });
 app.get('/api/admin/students.csv', requireAdmin, (req, res) => {
   const rows = q(`SELECT s.name, s.email, s.phone, s.company, datetime(s.created_at/1000,'unixepoch','+6 hours') joined,

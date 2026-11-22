@@ -43,3 +43,10 @@ th{font-size:12.5px;color:var(--muted);font-weight:600;background:var(--surface2
 tr.click{cursor:pointer}tr.click:hover td{background:#fafbff}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#16192b;color:#fff;padding:10px 18px;border-radius:10px;z-index:99;font-size:14px}
 @media (max-width:640px){.wrap{padding:18px 14px}.topbar{padding:12px 14px}}
+.podium{display:grid;grid-template-columns:1fr 1.15fr 1fr;gap:16px;align-items:end;margin-bottom:20px;max-width:820px}
+.pod{padding:18px;text-align:center;display:grid;gap:6px;justify-items:center;cursor:pointer;transition:.15s}
+.pod:hover{transform:translateY(-3px)}
+.pod .m{font-size:38px;line-height:1}.pod .pts{font-size:24px;font-weight:800;color:var(--brand)}.pod .pts small{font-size:12px;color:var(--muted);font-weight:600}
+.pod.p1{padding:26px 18px;border:2px solid #f5c542;background:linear-gradient(#fffbeb,var(--surface))}
+.pod.p2{border:2px solid #cbd5e1}.pod.p3{border:2px solid #e3a77a}
+@media (max-width:640px){.podium{grid-template-columns:1fr;}.pod.p1{order:-1}}
