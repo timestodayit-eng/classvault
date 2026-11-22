@@ -566,5 +566,5 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 // Mark videos stuck in processing (server restarted mid-encode) as errored
 q("UPDATE videos SET status='error', error='সার্ভার রিস্টার্ট হয়েছে, আবার আপলোড করুন' WHERE status='processing'").run();
 
-if (require.main === module) app.listen(PORT, () => console.log(`ClassVault running on http://localhost:${PORT}  (admin: /admin)`));
+if (require.main === module) app.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`ClassVault running on http://${process.env.HOST || 'localhost'}:${PORT}  (admin: /admin)`));
 module.exports = { app, processVideo, db };
