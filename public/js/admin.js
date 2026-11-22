@@ -9,6 +9,10 @@ const dt = (ms) => ms ? new Date(ms).toLocaleString('bn-BD', { day: 'numeric', m
 const ago = (ms) => { if (!ms) return '—'; const s = (Date.now() - ms) / 1000; if (s < 60) return 'এইমাত্র'; if (s < 3600) return bn(Math.floor(s / 60)) + ' মিনিট আগে';
   if (s < 86400) return bn(Math.floor(s / 3600)) + ' ঘণ্টা আগে'; return bn(Math.floor(s / 86400)) + ' দিন আগে'; };
 const pct = (p) => bn(Math.round(p || 0)) + '%';
+const co = (c) => c ? `<span class="pill brand" style="font-size:11.5px">🏢 ${esc(c)}</span>` : '<span class="muted" style="font-size:12px">কোম্পানি দেয়নি</span>';
+let COMPANIES = []; const companiesReady = fetch('/api/companies').then(r => r.json()).then(l => { COMPANIES = l; }).catch(() => {});
+const companySelect = (id, val = '') => `<select class="input" id="${id}" style="width:auto;min-width:190px"><option value="">সব কোম্পানি</option>${COMPANIES.map(c => `<option ${c === val ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option value="__none" ${val === '__none' ? 'selected' : ''}>কোম্পানি দেয়নি</option></select>`;
+const byCo = (f) => (x) => !f || (f === '__none' ? !x.company : x.company === f);
 const bar = (p, ok) => `<div class="bar ${ok ? 'ok' : ''}"><i style="width:${Math.min(100, p || 0)}%"></i></div>`;
 const status = (p) => p.completed ? '<span class="pill ok">✓ শেষ করেছে</span>' : (p.percent || 0) > 0 ? '<span class="pill warn">দেখছে</span>' : '<span class="pill">শুরু করেনি</span>';
 const rangesBar = (ranges, d) => `<div class="ranges" title="সবুজ অংশগুলো দেখা হয়েছে">${JSON.parse(ranges || '[]').map(([a, b]) =>
@@ -146,7 +150,7 @@ async function route() {
   const main = $('#main');
   try {
     if (r === 'videos') await viewVideos(main);
-    else if (r === 'students') await viewStudents(main);
+    else if (r === 'students') await viewStudents(main, id);
     else if (r === 'student') await viewStudent(main, id);
     else if (r === 'video') await viewVideoReport(main, id);
     else await viewOverview(main);
@@ -169,7 +173,7 @@ async function viewOverview(main) {
   <div class="cols">
     <div class="card panel"><h3>সাম্প্রতিক অ্যাক্টিভিটি</h3><div class="scroll"><table>
       <tr><th>স্টুডেন্ট</th><th>ভিডিও</th><th>দেখেছে</th><th>অগ্রগতি</th><th>কখন</th></tr>
-      ${o.recent.map(x => `<tr class="click" onclick="openSession(${x.id})"><td><a href="#/student/${x.student_id}" onclick="event.stopPropagation()"><b>${esc(x.student)}</b></a><div style="font-size:12.5px">📞 ${esc(x.phone)}</div><div class="muted" style="font-size:12px">✉️ ${esc(x.email)}</div><div class="muted" style="font-size:11.5px">${esc(x.device)} · ${esc(x.browser)} · ${esc(x.os)}</div></td>
+      ${o.recent.map(x => `<tr class="click" onclick="openSession(${x.id})"><td><a href="#/student/${x.student_id}" onclick="event.stopPropagation()"><b>${esc(x.student)}</b></a><div>${co(x.company)}</div><div style="font-size:12.5px">📞 ${esc(x.phone)}</div><div class="muted" style="font-size:12px">✉️ ${esc(x.email)}</div><div class="muted" style="font-size:11.5px">${esc(x.device)} · ${esc(x.browser)} · ${esc(x.os)}</div></td>
         <td>${esc(x.video)}</td><td>${dur(x.watch_time)}</td><td style="min-width:110px">${bar(x.percent, x.percent >= 95)}<span class="muted" style="font-size:12px">${pct(x.percent)}</span></td><td class="muted">${ago(x.last_active)}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">এখনো কোনো অ্যাক্টিভিটি নেই</td></tr>'}
     </table></div></div>
     <div class="card panel"><h3>জনপ্রিয় ভিডিও</h3><table>
@@ -178,9 +182,13 @@ async function viewOverview(main) {
     </table></div>
   </div>
   <div class="card panel" style="margin-top:18px"><h3>👥 নতুন স্টুডেন্ট / দর্শক <span style="display:flex;gap:8px"><a class="btn ghost sm" href="/api/admin/students.csv">⬇ সবার তালিকা (CSV)</a><a class="btn sm" href="#/students">সব স্টুডেন্ট দেখুন →</a></span></h3><div class="scroll"><table>
-    <tr><th>নাম</th><th>ফোন</th><th>ইমেইল</th><th>ভিডিও শুরু</th><th>মোট দেখা</th><th>যোগ দিয়েছে</th><th>শেষ দেখা</th></tr>
-    ${o.latestStudents.map(x => `<tr class="click" onclick="location.hash='#/student/${x.id}'"><td><b>${esc(x.name)}</b></td><td>${esc(x.phone)}</td><td>${esc(x.email)}</td><td>${bn(x.started)}</td><td>${dur(x.watch_time)}</td><td class="muted">${dt(x.created_at)}</td><td class="muted">${ago(x.last_seen)}</td></tr>`).join('') || '<tr><td colspan=7 class="muted">এখনো কেউ নেই</td></tr>'}
-  </table></div></div>`;
+    <tr><th>নাম</th><th>কোম্পানি</th><th>ফোন</th><th>ইমেইল</th><th>ভিডিও শুরু</th><th>মোট দেখা</th><th>যোগ দিয়েছে</th><th>শেষ দেখা</th></tr>
+    ${o.latestStudents.map(x => `<tr class="click" onclick="location.hash='#/student/${x.id}'"><td><b>${esc(x.name)}</b></td><td>${co(x.company)}</td><td>${esc(x.phone)}</td><td>${esc(x.email)}</td><td>${bn(x.started)}</td><td>${dur(x.watch_time)}</td><td class="muted">${dt(x.created_at)}</td><td class="muted">${ago(x.last_seen)}</td></tr>`).join('') || '<tr><td colspan=8 class="muted">এখনো কেউ নেই</td></tr>'}
+  </table></div></div>
+  <div class="card panel" style="margin-top:18px"><h3>🏢 কোম্পানি অনুযায়ী</h3><table>
+    <tr><th>কোম্পানি</th><th>স্টুডেন্ট</th><th>মোট দেখার সময়</th></tr>
+    ${o.byCompany.map(c => `<tr class="click" onclick="location.hash='#/students/${encodeURIComponent(c.company || '__none')}'"><td>${co(c.company)}</td><td>${bn(c.students)} জন</td><td>${dur(c.watch_time)}</td></tr>`).join('') || '<tr><td colspan=3 class="muted">এখনো কেউ নেই</td></tr>'}
+  </table></div>`;
   refreshTimer = setInterval(() => { if (location.hash === '' || location.hash === '#/overview') viewOverview(main).catch(() => {}); }, 15000);
 }
 
@@ -249,24 +257,27 @@ function uploadModal(classes) {
 }
 
 // ---------------- students ----------------
-async function viewStudents(main) {
-  const list = await api('/api/admin/students');
-  main.innerHTML = `<div class="head"><h1>স্টুডেন্ট <span class="pill">${bn(list.length)} জন</span></h1>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="input search" id="q" placeholder="নাম, ইমেইল বা ফোন দিয়ে খুঁজুন"><a class="btn ghost" href="/api/admin/students.csv">⬇ তালিকা (CSV)</a></div></div>
+async function viewStudents(main, preset) {
+  const list = await api('/api/admin/students'); await companiesReady;
+  let cf = preset ? decodeURIComponent(preset) : '';
+  main.innerHTML = `<div class="head"><h1>স্টুডেন্ট <span class="pill" id="cnt">${bn(list.length)} জন</span></h1>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="input search" id="q" placeholder="নাম, ইমেইল বা ফোন দিয়ে খুঁজুন">${companySelect('cf', cf)}<a class="btn ghost" href="/api/admin/students.csv">⬇ তালিকা (CSV)</a></div></div>
     <div class="card panel"><div class="scroll"><table id="tbl"></table></div></div>`;
   const draw = (f = '') => {
-    const rows = list.filter(s => (s.name + s.email + s.phone).toLowerCase().includes(f.toLowerCase()));
-    $('#tbl').innerHTML = `<tr><th>নাম</th><th>ফোন / ইমেইল</th><th>ভিডিও শুরু</th><th>শেষ করেছে</th><th>গড় দেখা</th><th>মোট সময়</th><th>মোট ভিউ</th><th>আবার দেখা</th><th>শেষ দেখা</th></tr>` +
+    const rows = list.filter(byCo(cf)).filter(s => (s.name + s.email + s.phone + (s.company || '')).toLowerCase().includes(f.toLowerCase()));
+    $('#tbl').innerHTML = `<tr><th>নাম</th><th>কোম্পানি</th><th>ফোন / ইমেইল</th><th>ভিডিও শুরু</th><th>শেষ করেছে</th><th>গড় দেখা</th><th>মোট সময়</th><th>মোট ভিউ</th><th>আবার দেখা</th><th>শেষ দেখা</th></tr>` +
       (rows.map(s => `<tr class="click" onclick="location.hash='#/student/${s.id}'"><td><b>${esc(s.name)}</b> ${s.blocked ? '<span class="pill bad">ব্লকড</span>' : ''}${s.blocked_actions ? ` <span class="pill warn" title="ব্লক করা চেষ্টা">⚠ ${bn(s.blocked_actions)}</span>` : ''}</td>
-        <td>${esc(s.phone)}<div class="muted" style="font-size:12px">${esc(s.email)}</div></td><td>${bn(s.started)}</td><td>${bn(s.completed)}</td>
+        <td>${co(s.company)}</td><td>${esc(s.phone)}<div class="muted" style="font-size:12px">${esc(s.email)}</div></td><td>${bn(s.started)}</td><td>${bn(s.completed)}</td>
         <td style="min-width:100px">${bar(s.avg_percent)}<span class="muted" style="font-size:12px">${pct(s.avg_percent)}</span></td><td>${dur(s.watch_time)}</td><td>${bn(s.views)} বার</td><td>${s.rewatch_seconds >= 1 ? dur(s.rewatch_seconds) : '—'}</td><td class="muted">${ago(s.last_seen)}</td></tr>`).join('')
-      || '<tr><td colspan=9 class="muted">কোনো স্টুডেন্ট নেই</td></tr>');
+      || '<tr><td colspan=10 class="muted">কোনো স্টুডেন্ট নেই</td></tr>');
+    $('#cnt').textContent = bn(rows.length) + ' জন';
   };
   draw(); $('#q').oninput = (e) => draw(e.target.value);
+  $('#cf').onchange = (e) => { cf = e.target.value; draw($('#q').value); };
 }
 
 async function viewStudent(main, id) {
-  const { student: s, progress, sessions, access } = await api('/api/admin/students/' + id);
+  const { student: s, progress, sessions, access } = await api('/api/admin/students/' + id); await companiesReady;
   const allVideos = (await api('/api/admin/videos')).filter(x => x.status === 'ready');
   const totalWatch = progress.reduce((a, p) => a + p.watch_time, 0);
   const totPauses = sessions.reduce((a, x) => a + x.pauses, 0), totSeeks = sessions.reduce((a, x) => a + x.seeks, 0);
@@ -276,6 +287,8 @@ async function viewStudent(main, id) {
   <div class="card prof"><div class="avatar">${esc(s.name.trim()[0] || '?')}</div><div style="flex:1">
     <h2 style="margin:0">${esc(s.name)} ${s.blocked ? '<span class="pill bad">ব্লকড</span>' : ''}</h2>
     <div class="muted">📞 ${esc(s.phone)} · ✉️ ${esc(s.email)}</div>
+    <div style="margin:6px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">${co(s.company)}
+      <select class="input" id="setCo" style="width:auto;padding:5px 10px;font-size:13px"><option value="">কোম্পানি বদলান…</option>${COMPANIES.filter(c => c !== s.company).map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
     <div class="muted" style="font-size:13px">যোগ দিয়েছে ${dt(s.created_at)} · ${bn(s.login_count)} বার লগইন · শেষ দেখা ${ago(s.last_seen)}</div></div></div>
   <div class="stats" style="margin-top:16px">
     <div class="card stat"><div class="k">মোট দেখার সময়</div><div class="v">${dur(totalWatch)}</div></div>
@@ -311,6 +324,7 @@ async function viewStudent(main, id) {
       || '<tr><td colspan=9 class="muted">কোনো সেশন নেই</td></tr>'}
   </table></div></div>`;
   $('#ga').onsubmit = async (e) => { e.preventDefault(); await post('/api/admin/access', { student_id: s.id, video_id: Number(new FormData(e.target).get('video_id')) }); toast('অনুমতি দেওয়া হয়েছে'); route(); };
+  $('#setCo').onchange = async (e) => { if (!e.target.value) return; await post('/api/admin/students/' + s.id, { company: e.target.value }, 'PATCH'); toast('কোম্পানি বদলানো হয়েছে'); route(); };
   $('#blk').onclick = async () => { await post('/api/admin/students/' + s.id, { blocked: !s.blocked }, 'PATCH'); route(); };
 }
 
@@ -356,7 +370,7 @@ window.openSession = async (id) => {
 
 // ---------------- video report ----------------
 async function viewVideoReport(main, id) {
-  const { video: v, rows, heat, pauseHeat, rewatchHeat } = await api(`/api/admin/videos/${id}/report`);
+  const { video: v, rows, heat, pauseHeat, rewatchHeat } = await api(`/api/admin/videos/${id}/report`); await companiesReady;
   const mx = Math.max(1, ...heat), pmx = Math.max(1, ...pauseHeat), rmx = Math.max(0.01, ...rewatchHeat);
   const avg = rows.length ? rows.reduce((a, r) => a + r.percent, 0) / rows.length : 0;
   main.innerHTML = `<div class="head"><a href="#/videos" class="btn ghost sm">← ক্লাস ও ভিডিও</a></div>
@@ -378,13 +392,14 @@ async function viewVideoReport(main, id) {
   <div class="card" style="padding:16px 18px;margin-bottom:18px"><b>কোন অংশ স্টুডেন্টরা বারবার দেখেছে</b> <span class="muted" style="font-size:13px">(উঁচু মানে বেশি বার ফিরে এসে দেখেছে, সম্ভবত কঠিন অংশ)</span>
     <div class="heat r">${rewatchHeat.map((h, i) => `<i title="${fmt(i / rewatchHeat.length * v.duration)}" style="height:${h / rmx * 100}%"></i>`).join('')}</div>
     <div class="muted" style="display:flex;justify-content:space-between;font-size:12px"><span>0:00</span><span>${fmt(v.duration / 2)}</span><span>${fmt(v.duration)}</span></div></div>
-  <div class="card panel"><h3>প্রত্যেক স্টুডেন্ট ${timesLegend}</h3><div class="scroll"><table>
+  <div class="card panel"><h3>প্রত্যেক স্টুডেন্ট ${timesLegend}</h3><div style="padding:10px 18px;border-bottom:1px solid var(--line)">${companySelect('rcf')}</div><div class="scroll"><table>
     <tr><th>স্টুডেন্ট</th><th>অবস্থা</th><th>কতটুকু</th><th>কোন অংশ কতবার</th><th>কতবার দেখেছে</th><th>আবার দেখা</th><th>ইউনিক / মোট</th><th>পজ</th><th>সিক</th><th>ট্যাব বদল</th><th>শেষ দেখা</th></tr>
-    ${rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.student_id}'"><td><b>${esc(r.name)}</b><div style="font-size:12.5px">📞 ${esc(r.phone)}</div><div class="muted" style="font-size:12px">✉️ ${esc(r.email)}</div></td><td>${status(r)}</td>
+    ${rows.map(r => `<tr class="click" data-co="${esc(r.company || '')}" onclick="location.hash='#/student/${r.student_id}'"><td><b>${esc(r.name)}</b><div>${co(r.company)}</div><div style="font-size:12.5px">📞 ${esc(r.phone)}</div><div class="muted" style="font-size:12px">✉️ ${esc(r.email)}</div></td><td>${status(r)}</td>
       <td style="min-width:100px">${bar(r.percent, r.completed)}<span style="font-size:13px;font-weight:600">${pct(r.percent)}</span></td><td style="min-width:150px">${timesBar(r.buckets, v.duration)}</td><td><b>${bn(r.views)} বার</b><div class="muted" style="font-size:12px">শেষ ${bn(r.full_views)} বার</div></td><td>${rewatchCell(r, v.duration)}</td>
       <td>${dur(r.unique_seconds)}<div class="muted" style="font-size:12px">মোট ${dur(r.watch_time)}</div></td><td>${bn(r.pauses)}</td><td>${bn(r.seeks)}</td><td>${bn(r.tab_switches)}</td><td class="muted">${ago(r.last_watched)}</td></tr>`).join('')
       || '<tr><td colspan=11 class="muted">এখনো কেউ দেখেনি</td></tr>'}
   </table></div></div>`;
+  $('#rcf').onchange = (e) => { const f = e.target.value; main.querySelectorAll('tr[data-co]').forEach(tr => { tr.style.display = !f || (f === '__none' ? !tr.dataset.co : tr.dataset.co === f) ? '' : 'none'; }); };
   await renderSharePanel($('#sharePanel'), v);
 }
 

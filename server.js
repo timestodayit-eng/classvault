@@ -60,7 +60,7 @@ for (const [t, c] of [['progress', 'media_seconds REAL DEFAULT 0'], ['progress',
   ['progress', "buckets TEXT DEFAULT '[]'"], ['sessions', 'media_seconds REAL DEFAULT 0'],
   ['sessions', 'mask TEXT'], ['sessions', 'native INTEGER DEFAULT 0'], ['sessions', 'key_fetches INTEGER DEFAULT 0'],
   ['sessions', 'playlist_fetches INTEGER DEFAULT 0'], ['sessions', 'stream_blocked INTEGER DEFAULT 0'],
-  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1']]) {
+  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1'], ['students', 'company TEXT']]) {
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* exists */ }
 }
 // Access control: every video is private. A student can watch a video only if they have a row here,
@@ -133,6 +133,9 @@ function requireAdmin(req, res, next) {
 const normEmail = (e) => String(e || '').trim().toLowerCase();
 const normPhone = (p) => { let d = String(p || '').replace(/\D/g, ''); if (d.startsWith('880')) d = '0' + d.slice(3); return d; };
 
+// Companies students can pick at login (admin can filter reports by these).
+const COMPANIES = ['Creative International', 'Coastal Manpower', 'SM Enterprise'];
+app.get('/api/companies', (req, res) => res.json(COMPANIES));
 app.post('/api/login', (req, res) => {
   const name = String(req.body.name || '').trim().slice(0, 80);
   const email = normEmail(req.body.email);
@@ -140,6 +143,8 @@ app.post('/api/login', (req, res) => {
   if (name.length < 2) return res.status(400).json({ error: 'সঠিক নাম লিখুন' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'সঠিক ইমেইল লিখুন' });
   if (phone.length < 10 || phone.length > 15) return res.status(400).json({ error: 'সঠিক ফোন নম্বর লিখুন' });
+  const company = String(req.body.company || '');
+  if (!COMPANIES.includes(company)) return res.status(400).json({ error: 'আপনার কোম্পানি বেছে নিন' });
 
   const byEmail = q('SELECT * FROM students WHERE email=?').get(email);
   const byPhone = q('SELECT * FROM students WHERE phone=?').get(phone);
@@ -149,17 +154,17 @@ app.post('/api/login', (req, res) => {
     // Email and phone must match the same person, otherwise someone could log in as another student.
     return res.status(409).json({ error: 'এই ইমেইল বা ফোন নম্বরটি অন্য তথ্যের সাথে আগে থেকেই নিবন্ধিত। আগের ইমেইল ও ফোন নম্বর একসাথে দিন।' });
   } else {
-    const r = q('INSERT INTO students(name,email,phone,created_at) VALUES(?,?,?,?)').run(name, email, phone, now());
+    const r = q('INSERT INTO students(name,email,phone,company,created_at) VALUES(?,?,?,?,?)').run(name, email, phone, company, now());
     student = q('SELECT * FROM students WHERE id=?').get(r.lastInsertRowid);
   }
   if (student.blocked) return res.status(403).json({ error: 'আপনার অ্যাক্সেস বন্ধ করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
-  q('UPDATE students SET name=?, last_seen=?, login_count=login_count+1 WHERE id=?').run(name, now(), student.id);
+  q('UPDATE students SET name=?, company=?, last_seen=?, login_count=login_count+1 WHERE id=?').run(name, company, now(), student.id);
   res.cookie('sid', sign({ t: 's', id: student.id, exp: now() + 30 * 864e5 }), cookieOpts(30 * 864e5));
-  res.json({ ok: true, student: { id: student.id, name, email, phone } });
+  res.json({ ok: true, student: { id: student.id, name, email, phone, company } });
 });
 app.post('/api/logout', (req, res) => { res.clearCookie('sid'); res.json({ ok: true }); });
 app.get('/api/me', requireStudent, (req, res) => {
-  const { id, name, email, phone } = req.student; res.json({ id, name, email, phone });
+  const { id, name, email, phone, company } = req.student; res.json({ id, name, email, phone, company });
 });
 
 app.get('/api/catalog', requireStudent, (req, res) => {
@@ -177,7 +182,7 @@ app.get('/api/share/:token', (req, res) => {
   const v = q("SELECT id,title,duration FROM videos WHERE share_token=? AND share_enabled=1 AND status='ready'").get(String(req.params.token));
   if (!v) return res.status(404).json({ error: 'এই লিংকটি আর কাজ করছে না। যিনি লিংক দিয়েছেন তার সাথে যোগাযোগ করুন।' });
   const s = currentStudent(req);
-  res.json({ video: v, me: s ? { name: s.name, email: s.email, phone: s.phone } : null });
+  res.json({ video: v, me: s ? { name: s.name, email: s.email, phone: s.phone, company: s.company } : null });
 });
 app.post('/api/share/:token/claim', requireStudent, (req, res) => {
   const v = q("SELECT id FROM videos WHERE share_token=? AND share_enabled=1 AND status='ready'").get(String(req.params.token));
@@ -302,6 +307,7 @@ app.post('/api/track/start', requireStudent, (req, res) => {
   const v = q("SELECT * FROM videos WHERE id=? AND status='ready'").get(req.body.videoId);
   if (!v) return res.status(404).json({ error: 'ভিডিও পাওয়া যায়নি' });
   if (!hasAccess(req.student.id, v.id)) return res.status(403).json({ error: 'noaccess' });
+  if (!req.student.company) return res.status(403).json({ error: 'company' }); // older accounts: ask for company once
   const ua = String(req.get('user-agent') || '').slice(0, 400);
   const { device, browser, os } = parseUA(ua);
   const p = q('SELECT last_position,percent,completed FROM progress WHERE student_id=? AND video_id=?').get(req.student.id, v.id);
@@ -418,14 +424,17 @@ app.get('/api/admin/overview', requireAdmin, (req, res) => {
     completions: q('SELECT COUNT(*) c FROM progress WHERE completed=1').get().c,
     avgPercent: q('SELECT COALESCE(AVG(percent),0) a FROM progress').get().a,
     blocked: q('SELECT COALESCE(SUM(blocked_actions),0) s FROM sessions').get().s,
-    recent: q(`SELECT se.id, se.started_at, se.last_active, se.watch_time, se.device, se.browser, se.os, se.ip, s.name student, s.email, s.phone, s.id student_id,
+    recent: q(`SELECT se.id, se.started_at, se.last_active, se.watch_time, se.device, se.browser, se.os, se.ip, s.name student, s.email, s.phone, s.company, s.id student_id,
        v.title video, v.id video_id, p.percent FROM sessions se JOIN students s ON s.id=se.student_id JOIN videos v ON v.id=se.video_id
        LEFT JOIN progress p ON p.student_id=se.student_id AND p.video_id=se.video_id
        ORDER BY se.last_active DESC LIMIT 12`).all(),
-    latestStudents: q(`SELECT s.id, s.name, s.email, s.phone, s.created_at, s.last_seen,
+    latestStudents: q(`SELECT s.id, s.name, s.email, s.phone, s.company, s.created_at, s.last_seen,
        (SELECT COUNT(*) FROM progress p WHERE p.student_id=s.id) started,
        (SELECT COALESCE(SUM(watch_time),0) FROM progress p WHERE p.student_id=s.id) watch_time
        FROM students s ORDER BY s.created_at DESC LIMIT 10`).all(),
+    byCompany: q(`SELECT COALESCE(s.company,'') company, COUNT(DISTINCT s.id) students,
+       (SELECT COALESCE(SUM(p.watch_time),0) FROM progress p JOIN students s2 ON s2.id=p.student_id WHERE COALESCE(s2.company,'')=COALESCE(s.company,'')) watch_time
+       FROM students s GROUP BY COALESCE(s.company,'') ORDER BY students DESC`).all(),
     topVideos: q(`SELECT v.id, v.title, c.name class, COUNT(p.student_id) viewers, COALESCE(AVG(p.percent),0) avg_percent,
        SUM(p.completed) completed FROM videos v JOIN classes c ON c.id=v.class_id LEFT JOIN progress p ON p.video_id=v.id
        WHERE v.status='ready' GROUP BY v.id ORDER BY viewers DESC LIMIT 6`).all(),
@@ -551,7 +560,12 @@ app.get('/api/admin/students/:id', requireAdmin, (req, res) => {
   res.json({ student: s, progress, sessions, access });
 });
 app.patch('/api/admin/students/:id', requireAdmin, (req, res) => {
-  q('UPDATE students SET blocked=? WHERE id=?').run(req.body.blocked ? 1 : 0, req.params.id); res.json({ ok: true });
+  if ('company' in req.body) {
+    if (req.body.company && !COMPANIES.includes(req.body.company)) return res.status(400).json({ error: 'কোম্পানি সঠিক নয়' });
+    q('UPDATE students SET company=? WHERE id=?').run(req.body.company || null, req.params.id);
+  }
+  if ('blocked' in req.body) q('UPDATE students SET blocked=? WHERE id=?').run(req.body.blocked ? 1 : 0, req.params.id);
+  res.json({ ok: true });
 });
 app.delete('/api/admin/students/:id', requireAdmin, (req, res) => {
   q('DELETE FROM students WHERE id=?').run(req.params.id); res.json({ ok: true });
@@ -565,7 +579,7 @@ app.post('/api/admin/videos/:id/share', requireAdmin, (req, res) => {
   res.json(q('SELECT share_token, share_enabled FROM videos WHERE id=?').get(v.id));
 });
 app.get('/api/admin/videos/:id/access', requireAdmin, (req, res) => {
-  res.json(q(`SELECT a.*, s.name, s.email, s.phone FROM access a JOIN students s ON s.id=a.student_id
+  res.json(q(`SELECT a.*, s.name, s.email, s.phone, s.company FROM access a JOIN students s ON s.id=a.student_id
       WHERE a.video_id=? ORDER BY a.granted_at DESC`).all(req.params.id));
 });
 // give a student access to a video: existing student by id, or a new/existing one by name+email+phone
@@ -601,7 +615,7 @@ app.get('/api/admin/sessions/:id', requireAdmin, (req, res) => {
 app.get('/api/admin/videos/:id/report', requireAdmin, (req, res) => {
   const v = q('SELECT v.*, c.name class_name FROM videos v JOIN classes c ON c.id=v.class_id WHERE v.id=?').get(req.params.id);
   if (!v) return res.status(404).end();
-  const rows = q(`SELECT p.*, (SELECT COUNT(*) FROM sessions se WHERE se.student_id=p.student_id AND se.video_id=p.video_id AND se.watch_time>=5) views, s.name, s.email, s.phone,
+  const rows = q(`SELECT p.*, (SELECT COUNT(*) FROM sessions se WHERE se.student_id=p.student_id AND se.video_id=p.video_id AND se.watch_time>=5) views, s.name, s.email, s.phone, s.company,
       (SELECT COUNT(*) FROM sessions se WHERE se.student_id=p.student_id AND se.video_id=p.video_id) sessions,
       (SELECT COALESCE(SUM(pauses),0) FROM sessions se WHERE se.student_id=p.student_id AND se.video_id=p.video_id) pauses,
       (SELECT COALESCE(SUM(seeks),0) FROM sessions se WHERE se.student_id=p.student_id AND se.video_id=p.video_id) seeks,
@@ -625,7 +639,7 @@ app.get('/api/admin/videos/:id/report', requireAdmin, (req, res) => {
   res.json({ video: v, rows, heat, pauseHeat, rewatchHeat });
 });
 app.get('/api/admin/students.csv', requireAdmin, (req, res) => {
-  const rows = q(`SELECT s.name, s.email, s.phone, datetime(s.created_at/1000,'unixepoch','+6 hours') joined,
+  const rows = q(`SELECT s.name, s.email, s.phone, s.company, datetime(s.created_at/1000,'unixepoch','+6 hours') joined,
       datetime(s.last_seen/1000,'unixepoch','+6 hours') last_seen, s.login_count logins,
       (SELECT COUNT(*) FROM access a WHERE a.student_id=s.id) videos_allowed,
       (SELECT COUNT(*) FROM progress p WHERE p.student_id=s.id) videos_started,
@@ -636,19 +650,19 @@ app.get('/api/admin/students.csv', requireAdmin, (req, res) => {
       (SELECT ip FROM sessions se WHERE se.student_id=s.id ORDER BY started_at DESC LIMIT 1) last_ip,
       CASE WHEN s.blocked THEN 'blocked' ELSE '' END status
       FROM students s ORDER BY s.created_at DESC`).all();
-  const cols = ['name', 'email', 'phone', 'joined', 'last_seen', 'logins', 'videos_allowed', 'videos_started', 'videos_finished', 'watch_seconds', 'sessions', 'last_device', 'last_ip', 'status'];
+  const cols = ['name', 'company', 'email', 'phone', 'joined', 'last_seen', 'logins', 'videos_allowed', 'videos_started', 'videos_finished', 'watch_seconds', 'sessions', 'last_device', 'last_ip', 'status'];
   const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
   res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="students.csv"' });
   res.send('\ufeff' + [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n'));
 });
 app.get('/api/admin/export.csv', requireAdmin, (req, res) => {
-  const rows = q(`SELECT s.name, s.email, s.phone, c.name class, v.title video, ROUND(p.percent,1) percent,
+  const rows = q(`SELECT s.name, s.email, s.phone, s.company, c.name class, v.title video, ROUND(p.percent,1) percent,
       ROUND(p.unique_seconds) unique_seconds, ROUND(p.watch_time) watch_seconds, p.completed, p.full_views times_finished, ROUND(MAX(p.media_seconds - p.unique_seconds,0)) rewatch_seconds,
       (SELECT COUNT(*) FROM sessions se WHERE se.student_id=p.student_id AND se.video_id=p.video_id AND se.watch_time>=5) views,
       datetime(p.first_watched/1000,'unixepoch') first_watched, datetime(p.last_watched/1000,'unixepoch') last_watched
       FROM progress p JOIN students s ON s.id=p.student_id JOIN videos v ON v.id=p.video_id JOIN classes c ON c.id=v.class_id
       ORDER BY s.name, c.sort, v.id`).all();
-  const cols = ['name', 'email', 'phone', 'class', 'video', 'percent', 'unique_seconds', 'watch_seconds', 'completed', 'views', 'times_finished', 'rewatch_seconds', 'first_watched', 'last_watched'];
+  const cols = ['name', 'company', 'email', 'phone', 'class', 'video', 'percent', 'unique_seconds', 'watch_seconds', 'completed', 'views', 'times_finished', 'rewatch_seconds', 'first_watched', 'last_watched'];
   const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
   res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="student-progress.csv"' });
   res.send('﻿' + [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n'));

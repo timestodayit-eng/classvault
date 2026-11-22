@@ -51,9 +51,11 @@
       if (!c.ok) { showOv('🔗', 'লিংকটি কাজ করছে না।'); return false; }
       videoId = (await c.json()).videoId; return true;
     };
-    if (j.me) { $('gate').classList.remove('show'); return claim(); }
+    if (j.me && j.me.company) { $('gate').classList.remove('show'); return claim(); }
     $('big').style.display = 'none';
     $('gateTitle').textContent = j.video.title;
+    if (j.me) { const f = $('gateForm'); f.elements.name.value = j.me.name; f.elements.email.value = j.me.email; f.elements.phone.value = j.me.phone; }
+    fetch('/api/companies').then(r => r.json()).then(l => l.forEach(c => $('gateCompany').add(new Option(c, c)))).catch(() => {});
     $('gate').classList.add('show');
     return new Promise((resolve) => {
       $('gateForm').onsubmit = async (e) => {
@@ -73,6 +75,8 @@
     const r = await fetch('/api/track/start', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoId, screen: `${screen.width}x${screen.height}`, native: !(window.Hls && Hls.isSupported()) && !!v.canPlayType('application/vnd.apple.mpegurl') }) });
     if (r.status === 401) return (location.href = '/');
+    const why = r.status === 403 ? (await r.clone().json().catch(() => ({}))).error : '';
+    if (why === 'company') return (location.href = '/');
     if (r.status === 403 && (await r.clone().json().catch(() => ({}))).error === 'noaccess') {
       $('title').textContent = 'এই ভিডিও দেখার অনুমতি নেই'; $('big').style.display = 'none';
       showOv('🔒', 'এই ভিডিওটি আপনাকে শেয়ার করা হয়নি। যিনি ভিডিও দেন, তার কাছ থেকে লিংক নিন।'); return;
@@ -87,6 +91,7 @@
     if (!r.ok) { $('title').textContent = 'ভিডিও পাওয়া যায়নি'; return; }
     const j = await r.json();
     sessionId = j.sessionId; duration = j.video.duration; wmInfo = j.watermark;
+    $('noshare').classList.add('show');
     document.title = j.video.title + ' | ক্লাসভল্ট';
     $('title').textContent = j.video.title; $('desc').textContent = j.video.description || '';
     buildWatermark();

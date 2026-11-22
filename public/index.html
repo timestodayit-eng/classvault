@@ -49,7 +49,11 @@ async function api(url, body) {
   return j;
 }
 
-function renderLogin() {
+async function fillCompanies(sel) {
+  const list = await api('/api/companies').catch(() => []);
+  sel.insertAdjacentHTML('beforeend', list.map(c => `<option>${esc(c)}</option>`).join(''));
+}
+function renderLogin(me) {
   $('#app').innerHTML = `
   <div class="hero">
     <div class="hero-l">
@@ -72,12 +76,15 @@ function renderLogin() {
         <label>আপনার নাম</label><input class="input" name="name" placeholder="যেমন: রাফি আহমেদ" required autocomplete="name">
         <label>ইমেইল</label><input class="input" name="email" type="email" placeholder="you@example.com" required autocomplete="email">
         <label>ফোন নম্বর</label><input class="input" name="phone" type="tel" placeholder="01XXXXXXXXX" required autocomplete="tel">
+        <label>আপনি কোন কোম্পানির?</label><select class="input" name="company" id="company" required><option value="">কোম্পানি বেছে নিন</option></select>
         <div class="err" id="err"></div>
         <button class="btn" style="width:100%;justify-content:center;margin-top:6px;padding:12px">প্রবেশ করুন →</button>
         <p class="muted" style="font-size:12.5px;margin:14px 0 0">পরের বার একই ইমেইল ও ফোন নম্বর দিলেই আপনার আগের সব অগ্রগতি পাবেন।</p>
       </form>
     </div>
   </div>`;
+  fillCompanies($('#company'));
+  if (me) { const f = $('#f'); f.elements.name.value = me.name; f.elements.email.value = me.email; f.elements.phone.value = me.phone; $('#err').textContent = 'আপনি কোন কোম্পানির, সেটা বেছে নিয়ে আবার প্রবেশ করুন।'; }
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target));
@@ -128,7 +135,7 @@ async function renderCatalog(me) {
 }
 
 async function boot() {
-  try { const me = await api('/api/me'); await renderCatalog(me); } catch { renderLogin(); }
+  try { const me = await api('/api/me'); if (!me.company) return renderLogin(me); await renderCatalog(me); } catch { renderLogin(); }
 }
 boot();
 </script>
