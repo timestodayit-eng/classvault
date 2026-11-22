@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ভিডিও | ক্লাসভল্ট</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+body{background:#0c0d16;color:#e8e9f3;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.topbar{background:#12131f;border-color:#22243a}
+.topbar .logo{color:#fff}
+.page{max-width:1100px;margin:0 auto;padding:22px 20px 60px}
+.player{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:16/9;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.player video{width:100%;height:100%;display:block;background:#000;pointer-events:none;transition:filter .2s}
+.player.blurred video{filter:blur(28px) brightness(.5)}
+.player:fullscreen{border-radius:0;aspect-ratio:auto}
+/* watermark */
+.wm-tile{position:absolute;inset:-50%;pointer-events:none;display:flex;flex-wrap:wrap;gap:70px 90px;transform:rotate(-24deg);align-content:center;justify-content:center;opacity:.07;font-size:15px;font-weight:700;color:#fff;z-index:3}
+.wm-move{position:absolute;pointer-events:none;z-index:4;color:rgba(255,255,255,.42);font-size:clamp(11px,1.6vw,16px);font-weight:700;text-shadow:0 0 3px rgba(0,0,0,.6);transition:top 1.6s ease,left 1.6s ease;white-space:nowrap;line-height:1.35}
+/* overlays */
+.shield{position:absolute;inset:0;z-index:5}
+.ov{position:absolute;inset:0;z-index:8;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;background:rgba(8,9,18,.82);padding:20px}
+.ov.show{display:flex}
+.ov .ic{font-size:40px}
+.bigplay{position:absolute;inset:0;z-index:9;display:grid;place-items:center;cursor:pointer}
+.bigplay span{width:76px;height:76px;border-radius:50%;background:rgba(79,70,229,.92);display:grid;place-items:center;font-size:30px;color:#fff;box-shadow:0 8px 30px rgba(79,70,229,.5)}
+/* controls */
+.ctrl{position:absolute;left:0;right:0;bottom:0;z-index:7;padding:30px 14px 10px;background:linear-gradient(transparent,rgba(0,0,0,.85));opacity:0;transition:.25s}
+.player:hover .ctrl,.player.paused .ctrl,.player.touch .ctrl{opacity:1}
+.seek{position:relative;height:16px;cursor:pointer;display:flex;align-items:center}
+.seek .track{position:absolute;left:0;right:0;height:5px;border-radius:5px;background:rgba(255,255,255,.22)}
+.seek .buf{position:absolute;left:0;height:5px;border-radius:5px;background:rgba(255,255,255,.3)}
+.seek .fill{position:absolute;left:0;height:5px;border-radius:5px;background:#7c74ff}
+.seek .knob{position:absolute;width:13px;height:13px;border-radius:50%;background:#fff;transform:translateX(-50%)}
+.row{display:flex;align-items:center;gap:6px;margin-top:4px}
+.cb{background:none;border:0;color:#fff;cursor:pointer;padding:6px 8px;border-radius:8px;font-size:17px;line-height:1}
+.cb:hover{background:rgba(255,255,255,.12)}
+.time{font-size:13px;font-variant-numeric:tabular-nums;opacity:.9;margin-left:4px}
+.spacer{flex:1}
+.vol{width:80px;accent-color:#7c74ff}
+.menu{position:relative}
+.menu .list{position:absolute;bottom:38px;right:0;background:#1b1c2c;border-radius:10px;padding:6px;display:none;min-width:90px}
+.menu.open .list{display:block}
+.menu .list button{display:block;width:100%;text-align:left;background:none;border:0;color:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:14px}
+.menu .list button.on,.menu .list button:hover{background:#4f46e5}
+.info{margin-top:20px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.info h1{font-size:22px;margin:0 0 6px;color:#fff}
+.note{margin-top:18px;background:#15162a;border:1px solid #26284a;border-radius:12px;padding:12px 16px;font-size:13.5px;color:#a5a8c8}
+.mystat{background:#15162a;border:1px solid #26284a;border-radius:12px;padding:12px 16px;min-width:220px}
+.mystat .bar{background:#26284a;margin-top:6px}
+@media (max-width:640px){.vol,#back,#fwd{display:none}.ctrl{padding:20px 8px 6px}.cb{padding:5px 6px;font-size:15px}.page{padding:12px 0 40px}.player{border-radius:0}.info,.note{margin-left:14px;margin-right:14px}}
+@media print{body{display:none!important}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a class="logo" href="/"><b>▶</b> ক্লাসভল্ট</a>
+  <a class="btn ghost sm" href="/" style="background:#22243a;color:#fff">← সব ভিডিও</a>
+</div>
+<div class="page">
+  <div class="player paused" id="player">
+    <video id="v" playsinline disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback nofullscreen" preload="auto"></video>
+    <div class="wm-tile" id="wmTile"></div>
+    <div class="wm-move" id="wm"></div>
+    <div class="shield" id="shield"></div>
+    <div class="bigplay" id="big"><span>▶</span></div>
+    <div class="ov" id="ov"><div class="ic" id="ovIc"></div><div id="ovMsg" style="max-width:420px"></div><button class="btn" id="ovBtn">আবার চালান</button></div>
+    <div class="ctrl" id="ctrl">
+      <div class="seek" id="seek"><div class="track"></div><div class="buf" id="buf"></div><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
+      <div class="row">
+        <button class="cb" id="pp" title="চালান/থামান">▶</button>
+        <button class="cb" id="back" title="১০ সেকেন্ড পিছনে">⟲</button>
+        <button class="cb" id="fwd" title="১০ সেকেন্ড সামনে">⟳</button>
+        <button class="cb" id="mute" title="শব্দ">🔊</button><input type="range" class="vol" id="vol" min="0" max="1" step="0.05" value="1">
+        <span class="time" id="time">0:00 / 0:00</span>
+        <span class="spacer"></span>
+        <div class="menu" id="speedMenu"><button class="cb" id="speedBtn" style="font-size:14px;font-weight:700">1x</button>
+          <div class="list" id="speedList"></div></div>
+        <button class="cb" id="fs" title="ফুলস্ক্রিন">⛶</button>
+      </div>
+    </div>
+  </div>
+  <div class="info">
+    <div style="flex:1;min-width:260px"><h1 id="title">লোড হচ্ছে…</h1><div id="desc" style="color:#a5a8c8;white-space:pre-wrap"></div></div>
+    <div class="mystat"><div style="font-size:13px;color:#a5a8c8">এই সেশনে দেখেছেন</div><div id="sessWatch" style="font-size:20px;font-weight:700">0:00</div></div>
+  </div>
+  <div class="note">🔒 এই ভিডিওটি সুরক্ষিত। ভিডিওর উপর আপনার নাম ও ফোন নম্বর দেখানো হচ্ছে। ভিডিও রেকর্ড বা শেয়ার করলে তা আপনার নামেই চিহ্নিত হবে। অন্য ট্যাব বা উইন্ডোতে গেলে ভিডিও থেমে যাবে।</div>
+</div>
+<script src="/vendor/hls.min.js"></script>
+<script src="/js/watch.js"></script>
+</body>
+</html>

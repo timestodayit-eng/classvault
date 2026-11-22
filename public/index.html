@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ক্লাসভল্ট | ক্লাস ভিডিও</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+.hero{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr}
+.hero-l{background:linear-gradient(150deg,#3730a3,#4f46e5 45%,#7c3aed);color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between}
+.hero-l h1{font-size:40px;line-height:1.25;margin:0 0 14px}
+.hero-l p{opacity:.85;font-size:17px;max-width:440px}
+.feat{display:grid;gap:12px;margin-top:28px}
+.feat div{display:flex;gap:12px;align-items:center;background:rgba(255,255,255,.1);padding:12px 16px;border-radius:12px;max-width:420px}
+.hero-r{display:grid;place-items:center;padding:32px}
+.login{width:100%;max-width:400px;padding:34px}
+.login h2{margin:0 0 4px;font-size:24px}
+.classes{display:grid;gap:30px}
+.cls h2{font-size:20px;margin:0 0 14px;display:flex;align-items:center;gap:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px}
+.vcard{overflow:hidden;cursor:pointer;transition:.18s;display:block;color:inherit}
+.vcard:hover{transform:translateY(-3px);box-shadow:0 10px 30px rgba(20,24,50,.12)}
+.thumb{aspect-ratio:16/9;background:#1e1b4b center/cover;position:relative}
+.thumb .dur{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.75);color:#fff;font-size:12px;padding:1px 7px;border-radius:6px}
+.thumb .play{position:absolute;inset:0;display:grid;place-items:center;opacity:0;transition:.2s;background:rgba(0,0,0,.25)}
+.vcard:hover .play{opacity:1}
+.play span{width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.95);display:grid;place-items:center;color:var(--brand);font-size:20px}
+.vbody{padding:14px 16px}
+.vbody h3{margin:0 0 8px;font-size:16px;line-height:1.35}
+.prog{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.prog .bar{flex:1}
+.empty{padding:60px;text-align:center}
+@media (max-width:860px){.hero{grid-template-columns:1fr}.hero-l{padding:32px 24px}.hero-l h1{font-size:28px}.feat{display:none}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+const bn = (n) => String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]);
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+async function api(url, body) {
+  const r = await fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error || 'সমস্যা হয়েছে'), { status: r.status });
+  return j;
+}
+
+function renderLogin() {
+  $('#app').innerHTML = `
+  <div class="hero">
+    <div class="hero-l">
+      <div class="logo" style="color:#fff"><b>▶</b> ক্লাসভল্ট</div>
+      <div>
+        <h1>তোমার ক্লাসের সব ভিডিও,<br>এক জায়গায়।</h1>
+        <p>কোনো পাসওয়ার্ড বা সাইন আপ লাগবে না। শুধু নাম, ইমেইল আর ফোন নম্বর দিয়ে ঢুকে যাও।</p>
+        <div class="feat">
+          <div>📚 ক্লাস অনুযায়ী সাজানো ভিডিও</div>
+          <div>⏯️ যেখানে থেমেছিলে, সেখান থেকেই আবার শুরু</div>
+          <div>✅ কোন ভিডিও কতটুকু দেখেছ, সব হিসাব</div>
+        </div>
+      </div>
+      <small style="opacity:.6">© ক্লাসভল্ট</small>
+    </div>
+    <div class="hero-r">
+      <form class="card login" id="f">
+        <h2>ভিডিও দেখতে ঢুকুন</h2>
+        <div class="muted">প্রথমবার হলে আপনার অ্যাকাউন্ট নিজে থেকেই তৈরি হয়ে যাবে।</div>
+        <label>আপনার নাম</label><input class="input" name="name" placeholder="যেমন: রাফি আহমেদ" required autocomplete="name">
+        <label>ইমেইল</label><input class="input" name="email" type="email" placeholder="you@example.com" required autocomplete="email">
+        <label>ফোন নম্বর</label><input class="input" name="phone" type="tel" placeholder="01XXXXXXXXX" required autocomplete="tel">
+        <div class="err" id="err"></div>
+        <button class="btn" style="width:100%;justify-content:center;margin-top:6px;padding:12px">প্রবেশ করুন →</button>
+        <p class="muted" style="font-size:12.5px;margin:14px 0 0">পরের বার একই ইমেইল ও ফোন নম্বর দিলেই আপনার আগের সব অগ্রগতি পাবেন।</p>
+      </form>
+    </div>
+  </div>`;
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target));
+    $('#err').textContent = '';
+    try { await api('/api/login', fd); boot(); } catch (er) { $('#err').textContent = er.message; }
+  };
+}
+
+async function renderCatalog(me) {
+  const classes = await api('/api/catalog');
+  const total = classes.reduce((s, c) => s + c.videos.length, 0);
+  const done = classes.reduce((s, c) => s + c.videos.filter(v => v.completed).length, 0);
+  $('#app').innerHTML = `
+  <div class="topbar">
+    <div class="logo"><b>▶</b> ক্লাসভল্ট</div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="muted">👋 ${esc(me.name)}</span>
+      <button class="btn ghost sm" id="out">বের হন</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div style="display:flex;justify-content:space-between;align-items:end;flex-wrap:wrap;gap:12px;margin-bottom:26px">
+      <div><h1 style="margin:0;font-size:26px">আমার ক্লাসগুলো</h1>
+      <div class="muted">মোট ${bn(total)}টি ভিডিও · ${bn(done)}টি শেষ করেছেন</div></div>
+    </div>
+    <div class="classes">
+    ${classes.filter(c => c.videos.length).map(c => `
+      <section class="cls">
+        <h2>${esc(c.name)} <span class="pill">${bn(c.videos.length)}টি ভিডিও</span></h2>
+        <div class="grid">
+        ${c.videos.map(v => `
+          <a class="card vcard" href="/watch?v=${v.id}">
+            <div class="thumb" style="background-image:url(/api/thumb/${v.id})">
+              <div class="play"><span>▶</span></div><span class="dur">${fmt(v.duration)}</span>
+            </div>
+            <div class="vbody">
+              <h3>${esc(v.title)}</h3>
+              <div class="prog">
+                ${v.completed ? '<span class="pill ok">✓ শেষ</span>' : v.percent ? `<div class="bar"><i style="width:${v.percent}%"></i></div> ${bn(Math.round(v.percent))}%` : '<span class="pill brand">নতুন</span>'}
+              </div>
+            </div>
+          </a>`).join('')}
+        </div>
+      </section>`).join('') || '<div class="card empty muted">এখনো কোনো ভিডিও আপলোড হয়নি।</div>'}
+    </div>
+  </div>`;
+  $('#out').onclick = async () => { await api('/api/logout', {}); renderLogin(); };
+}
+
+async function boot() {
+  try { const me = await api('/api/me'); await renderCatalog(me); } catch { renderLogin(); }
+}
+boot();
+</script>
+</body>
+</html>

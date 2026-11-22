@@ -1,0 +1,20 @@
+{
+  "name": "classvault",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@fontsource/hind-siliguri": "^5.3.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "hls.js": "^1.7.4",
+    "multer": "^2.5.0",
+    "terser": "^5.51.4"
+  }
+}
