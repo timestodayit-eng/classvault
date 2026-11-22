@@ -86,9 +86,13 @@ window.revoke = (studentId, videoId) => confirmBox('এই স্টুডেন
   await api('/api/admin/access', { method: 'DELETE', body: JSON.stringify({ student_id: studentId, video_id: videoId }) }); route();
 }, 'হ্যাঁ, বাতিল');
 
+let navGen = 0;
 async function api(url, opts = {}) {
+  const gen = navGen, isGet = !opts.method || opts.method === 'GET';
   const r = await fetch(url, { ...opts, headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {} });
   const j = await r.json().catch(() => ({}));
+  // a page load that finishes after the admin moved to another menu must not overwrite the new page
+  if (isGet && gen !== navGen) throw new Error('stale');
   if (r.status === 401) { renderLogin(); throw new Error('auth'); }
   if (!r.ok) throw new Error(j.error || 'সমস্যা হয়েছে');
   return j;
@@ -135,6 +139,7 @@ function shell() {
 let refreshTimer = null;
 async function route() {
   clearInterval(refreshTimer);
+  navGen++;
   document.querySelectorAll('.modal-bg').forEach(m => m.remove());
   const [, r, id] = (location.hash || '#/overview').split('/');
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.r === r || (r === 'student' && a.dataset.r === 'students') || (r === 'video' && a.dataset.r === 'videos')));
@@ -145,7 +150,7 @@ async function route() {
     else if (r === 'student') await viewStudent(main, id);
     else if (r === 'video') await viewVideoReport(main, id);
     else await viewOverview(main);
-  } catch (e) { if (e.message !== 'auth') main.innerHTML = `<div class="card" style="padding:30px">${esc(e.message)}</div>`; }
+  } catch (e) { if (e.message !== 'auth' && e.message !== 'stale') main.innerHTML = `<div class="card" style="padding:30px">${esc(e.message)}</div>`; }
 }
 window.addEventListener('hashchange', route);
 
