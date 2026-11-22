@@ -65,6 +65,10 @@ for (const [t, c] of [['progress', 'media_seconds REAL DEFAULT 0'], ['progress',
 }
 // Access control: every video is private. A student can watch a video only if they have a row here,
 // given either by opening the video's share link ("link") or by the admin ("admin").
+// every time someone fills the name/email/phone/company form (login page or share link)
+db.exec(`CREATE TABLE IF NOT EXISTS form_entries(id INTEGER PRIMARY KEY, student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+  name TEXT, email TEXT, phone TEXT, company TEXT, via TEXT, video_id INTEGER, matched TEXT, ip TEXT, user_agent TEXT, at INTEGER)`);
+db.exec('CREATE INDEX IF NOT EXISTS fe_student ON form_entries(student_id, at)');
 db.exec(`CREATE TABLE IF NOT EXISTS access(
   student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
   video_id INTEGER REFERENCES videos(id) ON DELETE CASCADE,
@@ -158,17 +162,24 @@ app.post('/api/login', (req, res) => {
   if (chk.error) return res.status(400).json({ error: chk.error });
   const { name, email, phone, company } = chk;
 
+  // The form only COLLECTS viewer info; it never refuses someone because the info differs from before.
+  // Same email → same viewer (else same phone). Nothing matches → new viewer. Every submission is kept in form_entries.
   const byEmail = q('SELECT * FROM students WHERE email=?').get(email);
   const byPhone = q('SELECT * FROM students WHERE phone=? OR phone=?').get(phone, phone.replace('+', ''));
-  let student;
-  if (byEmail && byPhone && byEmail.id === byPhone.id) student = byEmail;
-  else if (byEmail || byPhone) {
-    // Email and phone must match the same person, otherwise someone could log in as another student.
-    return res.status(409).json({ error: 'এই ইমেইল বা ফোন নম্বরটি অন্য তথ্যের সাথে আগে থেকেই নিবন্ধিত। আগের ইমেইল ও ফোন নম্বর একসাথে দিন।' });
-  } else {
+  let student = byEmail || byPhone, matched;
+  if (!student) {
     const r = q('INSERT INTO students(name,email,phone,company,created_at) VALUES(?,?,?,?,?)').run(name, email, phone, company, now());
-    student = q('SELECT * FROM students WHERE id=?').get(r.lastInsertRowid);
+    student = q('SELECT * FROM students WHERE id=?').get(r.lastInsertRowid); matched = 'new';
+  } else {
+    matched = byEmail && byPhone ? (byEmail.id === byPhone.id ? 'same' : 'mixed') : byEmail ? 'email' : 'phone';
+    // keep the newest contact details on the profile when they aren't someone else's
+    if (!byEmail) q('UPDATE students SET email=? WHERE id=?').run(email, student.id);
+    if (!byPhone) q('UPDATE students SET phone=? WHERE id=?').run(phone, student.id);
   }
+  q(`INSERT INTO form_entries(student_id,name,email,phone,company,via,video_id,matched,ip,user_agent,at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(student.id, name, email, phone, company, req.body.via === 'link' ? 'link' : 'login',
+      (q('SELECT id FROM videos WHERE share_token=?').get(String(req.body.token || '')) || {}).id || null, matched, req.ip,
+      String(req.get('user-agent') || '').slice(0, 300), now());
   if (student.blocked) return res.status(403).json({ error: 'আপনার অ্যাক্সেস বন্ধ করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
   q('UPDATE students SET name=?, company=?, last_seen=?, login_count=login_count+1 WHERE id=?').run(name, company, now(), student.id);
   res.cookie('sid', sign({ t: 's', id: student.id, exp: now() + 30 * 864e5 }), cookieOpts(30 * 864e5));
@@ -569,7 +580,8 @@ app.get('/api/admin/students/:id', requireAdmin, (req, res) => {
       ORDER BY se.started_at DESC LIMIT 200`).all(s.id);
   const access = q(`SELECT a.*, v.title, c.name class_name FROM access a JOIN videos v ON v.id=a.video_id JOIN classes c ON c.id=v.class_id
       WHERE a.student_id=? ORDER BY a.granted_at DESC`).all(s.id);
-  res.json({ student: s, progress, sessions, access });
+  const entries = q(`SELECT f.*, v.title video FROM form_entries f LEFT JOIN videos v ON v.id=f.video_id WHERE f.student_id=? ORDER BY f.at DESC LIMIT 100`).all(s.id);
+  res.json({ student: s, progress, sessions, access, entries });
 });
 app.patch('/api/admin/students/:id', requireAdmin, (req, res) => {
   if ('company' in req.body) {
@@ -604,8 +616,7 @@ app.post('/api/admin/access', requireAdmin, (req, res) => {
     if (chk.error) return res.status(400).json({ error: chk.error });
     const { name, email, phone, company } = chk;
     const byEmail = q('SELECT * FROM students WHERE email=?').get(email), byPhone = q('SELECT * FROM students WHERE phone=? OR phone=?').get(phone, phone.replace('+', ''));
-    if (byEmail && byPhone && byEmail.id === byPhone.id) sid = byEmail.id;
-    else if (byEmail || byPhone) return res.status(409).json({ error: 'এই ইমেইল বা ফোন অন্য একজন স্টুডেন্টের নামে আছে। তালিকা থেকে বেছে নিন।' });
+    if (byEmail || byPhone) sid = (byEmail || byPhone).id;
     else {
       sid = Number(q('INSERT INTO students(name,email,phone,company,created_at) VALUES(?,?,?,?,?)').run(name, email, phone, company, now()).lastInsertRowid);
     }
@@ -696,6 +707,15 @@ app.get('/api/admin/students.csv', requireAdmin, (req, res) => {
   const cols = ['name', 'company', 'email', 'phone', 'joined', 'last_seen', 'logins', 'videos_allowed', 'videos_started', 'videos_finished', 'watch_seconds', 'sessions', 'last_device', 'last_ip', 'status'];
   const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
   res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="students.csv"' });
+  res.send('\ufeff' + [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n'));
+});
+app.get('/api/admin/form-entries.csv', requireAdmin, (req, res) => {
+  const rows = q(`SELECT datetime(f.at/1000,'unixepoch','+6 hours') time, f.name, f.company, f.email, f.phone, f.via, v.title video,
+      f.matched, s.name profile_name, f.ip FROM form_entries f LEFT JOIN videos v ON v.id=f.video_id LEFT JOIN students s ON s.id=f.student_id
+      ORDER BY f.at DESC`).all();
+  const cols = ['time', 'name', 'company', 'email', 'phone', 'via', 'video', 'matched', 'profile_name', 'ip'];
+  const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="form-entries.csv"' });
   res.send('\ufeff' + [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n'));
 });
 app.get('/api/admin/export.csv', requireAdmin, (req, res) => {

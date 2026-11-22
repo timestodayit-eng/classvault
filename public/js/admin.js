@@ -136,6 +136,7 @@ function shell() {
       <div class="foot" style="margin-top:auto;display:grid;gap:8px">
         <a class="btn ghost sm" href="/api/admin/students.csv" style="justify-content:center">⬇ স্টুডেন্ট তালিকা (CSV)</a>
         <a class="btn ghost sm" href="/api/admin/export.csv" style="justify-content:center">⬇ ভিডিও রিপোর্ট (CSV)</a>
+        <a class="btn ghost sm" href="/api/admin/form-entries.csv" style="justify-content:center">⬇ ফর্ম এন্ট্রি (CSV)</a>
         <button class="btn ghost sm" id="logout" style="justify-content:center">লগআউট</button>
       </div>
     </aside><main class="main" id="main"></main></div>`;
@@ -309,7 +310,7 @@ async function viewStudents(main, preset) {
 }
 
 async function viewStudent(main, id) {
-  const { student: s, progress, sessions, access } = await api('/api/admin/students/' + id); await companiesReady;
+  const { student: s, progress, sessions, access, entries = [] } = await api('/api/admin/students/' + id); await companiesReady;
   const allVideos = (await api('/api/admin/videos')).filter(x => x.status === 'ready');
   const totalWatch = progress.reduce((a, p) => a + p.watch_time, 0);
   const totPauses = sessions.reduce((a, x) => a + x.pauses, 0), totSeeks = sessions.reduce((a, x) => a + x.seeks, 0);
@@ -348,6 +349,13 @@ async function viewStudent(main, id) {
     ${access.map(a => `<tr><td><b>${esc(a.title)}</b><div class="muted" style="font-size:12px">${esc(a.class_name)}</div></td><td><span class="pill ${a.source === 'link' ? 'brand' : ''}">${({ link: 'লিংক দিয়ে', admin: 'আপনি দিয়েছেন', legacy: 'আগে থেকে' })[a.source] || a.source}</span></td>
       <td class="muted">${dt(a.granted_at)}</td><td><button class="btn danger sm" onclick="revoke(${s.id}, ${a.video_id})">অনুমতি বাতিল</button></td></tr>`).join('') || '<tr><td colspan=4 class="muted">কোনো ভিডিওর অনুমতি নেই</td></tr>'}
     </table></div></div>
+  <div class="card panel" style="margin-bottom:18px"><h3>📝 ফর্মে যা লিখেছে <span class="pill">${bn(entries.length)} বার</span></h3><div class="scroll"><table>
+    <tr><th>কখন</th><th>নাম</th><th>কোম্পানি</th><th>ফোন</th><th>ইমেইল</th><th>কোথা থেকে</th><th></th></tr>
+    ${entries.map(f => `<tr><td class="muted">${dt(f.at)}</td><td>${esc(f.name)}</td><td>${co(f.company)}</td><td>${esc(f.phone)}</td><td>${esc(f.email)}</td>
+      <td>${f.via === 'link' ? '🔗 শেয়ার লিংক' + (f.video ? `<div class="muted" style="font-size:12px">${esc(f.video)}</div>` : '') : '🏠 লগইন পেজ'}</td>
+      <td>${({ new: '<span class="pill ok">নতুন</span>', same: '', email: '<span class="pill warn">ফোন আলাদা</span>', phone: '<span class="pill warn">ইমেইল আলাদা</span>', mixed: '<span class="pill warn">ফোন অন্যজনের</span>' })[f.matched] || ''}</td></tr>`).join('')
+      || '<tr><td colspan=7 class="muted">এখনো কোনো এন্ট্রি নেই (এই আপডেটের আগের লগইন এখানে নেই)</td></tr>'}
+  </table></div></div>
   <div class="card panel"><h3>সব সেশন <span class="muted" style="font-weight:400;font-size:13px">ক্লিক করলে প্রতিটি অ্যাকশনের টাইমলাইন দেখাবে</span></h3><div class="scroll"><table>
     <tr><th>কখন</th><th>ভিডিও</th><th>দেখেছে</th><th>পজ</th><th>সিক</th><th>ট্যাব বদল</th><th>সর্বোচ্চ স্পিড</th><th>ডিভাইস</th><th>ব্লকড</th></tr>
     ${sessions.map(x => `<tr class="click" onclick="openSession(${x.id})"><td>${dt(x.started_at)}<div class="muted" style="font-size:12px">${fmt(x.start_pos)} → ${fmt(x.end_pos)}</div></td><td>${esc(x.title)} ${x.ended ? '<span class="pill ok">শেষ</span>' : ''}</td><td>${dur(x.watch_time)}</td>
