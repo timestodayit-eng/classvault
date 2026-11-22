@@ -161,11 +161,15 @@
     else (player.requestFullscreen || player.webkitRequestFullscreen).call(player); // fullscreen the wrapper so the watermark stays visible
   };
   const seekEl = $('seek');
-  function seekTo(e) { const r = seekEl.getBoundingClientRect(); const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left; v.currentTime = Math.max(0, Math.min(1, x / r.width)) * (v.duration || duration); }
-  let dragging = false;
-  seekEl.addEventListener('pointerdown', (e) => { dragging = true; seekTo(e); seekEl.setPointerCapture(e.pointerId); });
-  seekEl.addEventListener('pointermove', (e) => { if (dragging) seekTo(e); });
-  seekEl.addEventListener('pointerup', () => { dragging = false; });
+  // While dragging, only the bar moves; the video jumps once when the finger/mouse is released.
+  // (Seeking on every mouse move made the player fetch dozens of segments and looked like a downloader.)
+  let dragging = false, dragT = null;
+  function posAt(e) { const r = seekEl.getBoundingClientRect(); const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left; return Math.max(0, Math.min(1, x / r.width)) * (v.duration || duration); }
+  function preview(t) { const d = v.duration || duration, p = d ? t / d * 100 : 0; $('fill').style.width = p + '%'; $('knob').style.left = p + '%'; $('time').textContent = `${fmt(t)} / ${fmt(d)}`; }
+  seekEl.addEventListener('pointerdown', (e) => { dragging = true; dragT = posAt(e); preview(dragT); seekEl.setPointerCapture(e.pointerId); });
+  seekEl.addEventListener('pointermove', (e) => { if (dragging) { dragT = posAt(e); preview(dragT); } });
+  const endDrag = () => { if (dragging && dragT !== null) v.currentTime = dragT; dragging = false; dragT = null; };
+  seekEl.addEventListener('pointerup', endDrag); seekEl.addEventListener('pointercancel', endDrag);
   if (matchMedia('(hover: none)').matches) player.classList.add('touch');
 
   // ---------------- media events → tracking ----------------
@@ -198,6 +202,7 @@
   v.addEventListener('timeupdate', () => {
     if (!v.seeking) lastPos = v.currentTime;
     const d = v.duration || duration, p = d ? v.currentTime / d * 100 : 0;
+    if (dragging) return;
     $('fill').style.width = p + '%'; $('knob').style.left = p + '%';
     $('time').textContent = `${fmt(v.currentTime)} / ${fmt(d)}`;
     if (v.buffered.length) $('buf').style.width = (v.buffered.end(v.buffered.length - 1) / d * 100) + '%';

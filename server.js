@@ -263,16 +263,29 @@ app.get('/api/stream/:id/key', (req, res) => {
   res.set({ 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
   res.send(out);
 });
-app.get('/api/stream/:id/seg/:seg', (req, res) => {
+// Telling a downloader from a student who seeks a lot: a downloader pulls the segments IN ORDER, far faster than real time.
+// A student who jumps around fetches a few segments at each new spot. So:
+//  - more than SEG_PER_MIN in a minute → we only slow that session down a little (no block, playback keeps going);
+//  - SEQ_RUN_MAX segments in a row within a minute (= several minutes of video pulled straight through) → block + log;
+//  - SEG_HARD_MAX in a minute, in any order → block + log (no human can seek that much).
+const SEQ_RUN_MAX = 45, SEG_HARD_MAX = 240;
+app.get('/api/stream/:id/seg/:seg', async (req, res) => {
   if (!/^seg_\d+\.ts$/.test(req.params.seg)) return res.status(400).end();
   const sess = streamSession(req, res); if (!sess) return;
-  const t = now(), hits = (segHits.get(sess.id) || []).filter(x => t - x < 60e3);
-  hits.push(t); segHits.set(sess.id, hits);
-  if (hits.length > SEG_PER_MIN) { flagSession(sess, 'too_fast'); segHits.delete(sess.id); return res.status(403).end(); }
+  const t = now(), idx = Number(req.params.seg.slice(4, -3));
+  const hits = (segHits.get(sess.id) || []).filter(x => t - x.t < 60e3);
+  hits.push({ t, idx }); segHits.set(sess.id, hits);
+  let run = 1, best = 1;
+  for (let i = 1; i < hits.length; i++) { run = hits[i].idx === hits[i - 1].idx + 1 ? run + 1 : (hits[i].idx === hits[i - 1].idx ? run : 1); if (run > best) best = run; }
+  if (best >= SEQ_RUN_MAX || hits.length > SEG_HARD_MAX) {
+    flagSession(sess, best >= SEQ_RUN_MAX ? 'too_fast' : 'too_many'); segHits.delete(sess.id); return res.status(403).end();
+  }
+  if (hits.length > SEG_PER_MIN) await new Promise(r => setTimeout(r, Math.min(3000, (hits.length - SEG_PER_MIN) * 100)));
+  if (res.writableEnded || req.destroyed) return;
   res.set({ 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store' });
   res.sendFile(path.join(vdir(req.params.id), req.params.seg));
 });
-setInterval(() => { const t = now(); for (const [k, v] of segHits) if (!v.length || t - v[v.length - 1] > 120e3) segHits.delete(k); }, 60e3).unref();
+setInterval(() => { const t = now(); for (const [k, v] of segHits) if (!v.length || t - v[v.length - 1].t > 120e3) segHits.delete(k); }, 60e3).unref();
 
 // ---------- Tracking ----------
 function parseUA(ua = '') {
@@ -492,7 +505,7 @@ async function processVideo(id, input) {
     fs.writeFileSync(path.join(dir, 'keyinfo'), `KEYURI\n${path.join(dir, 'enc.key')}\n${crypto.randomBytes(16).toString('hex')}\n`);
     await new Promise((resolve, reject) => {
       const ff = spawn('ffmpeg', ['-y', '-i', input, '-map', '0:v:0', '-map', '0:a:0?',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-vf', 'scale=-2:min(720\\,ih)', '-pix_fmt', 'yuv420p',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-maxrate', '1500k', '-bufsize', '3000k', '-vf', 'scale=-2:min(720\\,ih)', '-pix_fmt', 'yuv420p',
         '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
         '-hls_time', '6', '-hls_playlist_type', 'vod', '-hls_key_info_file', path.join(dir, 'keyinfo'),
         '-hls_segment_filename', path.join(dir, 'seg_%04d.ts'), '-progress', 'pipe:1', '-nostats', path.join(dir, 'index.m3u8')]);
