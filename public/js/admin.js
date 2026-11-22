@@ -125,7 +125,8 @@ function shell() {
         <a href="#/students" data-r="students">👥 স্টুডেন্ট</a>
       </nav>
       <div class="foot" style="margin-top:auto;display:grid;gap:8px">
-        <a class="btn ghost sm" href="/api/admin/export.csv" style="justify-content:center">⬇ রিপোর্ট (CSV)</a>
+        <a class="btn ghost sm" href="/api/admin/students.csv" style="justify-content:center">⬇ স্টুডেন্ট তালিকা (CSV)</a>
+        <a class="btn ghost sm" href="/api/admin/export.csv" style="justify-content:center">⬇ ভিডিও রিপোর্ট (CSV)</a>
         <button class="btn ghost sm" id="logout" style="justify-content:center">লগআউট</button>
       </div>
     </aside><main class="main" id="main"></main></div>`;
@@ -163,14 +164,18 @@ async function viewOverview(main) {
   <div class="cols">
     <div class="card panel"><h3>সাম্প্রতিক অ্যাক্টিভিটি</h3><div class="scroll"><table>
       <tr><th>স্টুডেন্ট</th><th>ভিডিও</th><th>দেখেছে</th><th>অগ্রগতি</th><th>কখন</th></tr>
-      ${o.recent.map(x => `<tr class="click" onclick="openSession(${x.id})"><td><a href="#/student/${x.student_id}" onclick="event.stopPropagation()">${esc(x.student)}</a><div class="muted" style="font-size:12px">${esc(x.device)} · ${esc(x.browser)}</div></td>
+      ${o.recent.map(x => `<tr class="click" onclick="openSession(${x.id})"><td><a href="#/student/${x.student_id}" onclick="event.stopPropagation()"><b>${esc(x.student)}</b></a><div style="font-size:12.5px">📞 ${esc(x.phone)}</div><div class="muted" style="font-size:12px">✉️ ${esc(x.email)}</div><div class="muted" style="font-size:11.5px">${esc(x.device)} · ${esc(x.browser)} · ${esc(x.os)}</div></td>
         <td>${esc(x.video)}</td><td>${dur(x.watch_time)}</td><td style="min-width:110px">${bar(x.percent, x.percent >= 95)}<span class="muted" style="font-size:12px">${pct(x.percent)}</span></td><td class="muted">${ago(x.last_active)}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">এখনো কোনো অ্যাক্টিভিটি নেই</td></tr>'}
     </table></div></div>
     <div class="card panel"><h3>জনপ্রিয় ভিডিও</h3><table>
       <tr><th>ভিডিও</th><th>দর্শক</th><th>গড় দেখা</th></tr>
       ${o.topVideos.map(v => `<tr class="click" onclick="location.hash='#/video/${v.id}'"><td>${esc(v.title)}<div class="muted" style="font-size:12px">${esc(v.class)}</div></td><td>${bn(v.viewers)}</td><td style="min-width:90px">${bar(v.avg_percent)}<span class="muted" style="font-size:12px">${pct(v.avg_percent)}</span></td></tr>`).join('') || '<tr><td colspan=3 class="muted">কোনো ভিডিও নেই</td></tr>'}
     </table></div>
-  </div>`;
+  </div>
+  <div class="card panel" style="margin-top:18px"><h3>👥 নতুন স্টুডেন্ট / দর্শক <span style="display:flex;gap:8px"><a class="btn ghost sm" href="/api/admin/students.csv">⬇ সবার তালিকা (CSV)</a><a class="btn sm" href="#/students">সব স্টুডেন্ট দেখুন →</a></span></h3><div class="scroll"><table>
+    <tr><th>নাম</th><th>ফোন</th><th>ইমেইল</th><th>ভিডিও শুরু</th><th>মোট দেখা</th><th>যোগ দিয়েছে</th><th>শেষ দেখা</th></tr>
+    ${o.latestStudents.map(x => `<tr class="click" onclick="location.hash='#/student/${x.id}'"><td><b>${esc(x.name)}</b></td><td>${esc(x.phone)}</td><td>${esc(x.email)}</td><td>${bn(x.started)}</td><td>${dur(x.watch_time)}</td><td class="muted">${dt(x.created_at)}</td><td class="muted">${ago(x.last_seen)}</td></tr>`).join('') || '<tr><td colspan=7 class="muted">এখনো কেউ নেই</td></tr>'}
+  </table></div></div>`;
   refreshTimer = setInterval(() => { if (location.hash === '' || location.hash === '#/overview') viewOverview(main).catch(() => {}); }, 15000);
 }
 
@@ -242,7 +247,7 @@ function uploadModal(classes) {
 async function viewStudents(main) {
   const list = await api('/api/admin/students');
   main.innerHTML = `<div class="head"><h1>স্টুডেন্ট <span class="pill">${bn(list.length)} জন</span></h1>
-    <input class="input search" id="q" placeholder="নাম, ইমেইল বা ফোন দিয়ে খুঁজুন"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="input search" id="q" placeholder="নাম, ইমেইল বা ফোন দিয়ে খুঁজুন"><a class="btn ghost" href="/api/admin/students.csv">⬇ তালিকা (CSV)</a></div></div>
     <div class="card panel"><div class="scroll"><table id="tbl"></table></div></div>`;
   const draw = (f = '') => {
     const rows = list.filter(s => (s.name + s.email + s.phone).toLowerCase().includes(f.toLowerCase()));
@@ -370,7 +375,7 @@ async function viewVideoReport(main, id) {
     <div class="muted" style="display:flex;justify-content:space-between;font-size:12px"><span>0:00</span><span>${fmt(v.duration / 2)}</span><span>${fmt(v.duration)}</span></div></div>
   <div class="card panel"><h3>প্রত্যেক স্টুডেন্ট ${timesLegend}</h3><div class="scroll"><table>
     <tr><th>স্টুডেন্ট</th><th>অবস্থা</th><th>কতটুকু</th><th>কোন অংশ কতবার</th><th>কতবার দেখেছে</th><th>আবার দেখা</th><th>ইউনিক / মোট</th><th>পজ</th><th>সিক</th><th>ট্যাব বদল</th><th>শেষ দেখা</th></tr>
-    ${rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.student_id}'"><td><b>${esc(r.name)}</b><div class="muted" style="font-size:12px">${esc(r.phone)}</div></td><td>${status(r)}</td>
+    ${rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.student_id}'"><td><b>${esc(r.name)}</b><div style="font-size:12.5px">📞 ${esc(r.phone)}</div><div class="muted" style="font-size:12px">✉️ ${esc(r.email)}</div></td><td>${status(r)}</td>
       <td style="min-width:100px">${bar(r.percent, r.completed)}<span style="font-size:13px;font-weight:600">${pct(r.percent)}</span></td><td style="min-width:150px">${timesBar(r.buckets, v.duration)}</td><td><b>${bn(r.views)} বার</b><div class="muted" style="font-size:12px">শেষ ${bn(r.full_views)} বার</div></td><td>${rewatchCell(r, v.duration)}</td>
       <td>${dur(r.unique_seconds)}<div class="muted" style="font-size:12px">মোট ${dur(r.watch_time)}</div></td><td>${bn(r.pauses)}</td><td>${bn(r.seeks)}</td><td>${bn(r.tab_switches)}</td><td class="muted">${ago(r.last_watched)}</td></tr>`).join('')
       || '<tr><td colspan=11 class="muted">এখনো কেউ দেখেনি</td></tr>'}

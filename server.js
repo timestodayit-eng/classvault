@@ -405,10 +405,14 @@ app.get('/api/admin/overview', requireAdmin, (req, res) => {
     completions: q('SELECT COUNT(*) c FROM progress WHERE completed=1').get().c,
     avgPercent: q('SELECT COALESCE(AVG(percent),0) a FROM progress').get().a,
     blocked: q('SELECT COALESCE(SUM(blocked_actions),0) s FROM sessions').get().s,
-    recent: q(`SELECT se.id, se.started_at, se.last_active, se.watch_time, se.device, se.browser, s.name student, s.id student_id,
+    recent: q(`SELECT se.id, se.started_at, se.last_active, se.watch_time, se.device, se.browser, se.os, se.ip, s.name student, s.email, s.phone, s.id student_id,
        v.title video, v.id video_id, p.percent FROM sessions se JOIN students s ON s.id=se.student_id JOIN videos v ON v.id=se.video_id
        LEFT JOIN progress p ON p.student_id=se.student_id AND p.video_id=se.video_id
        ORDER BY se.last_active DESC LIMIT 12`).all(),
+    latestStudents: q(`SELECT s.id, s.name, s.email, s.phone, s.created_at, s.last_seen,
+       (SELECT COUNT(*) FROM progress p WHERE p.student_id=s.id) started,
+       (SELECT COALESCE(SUM(watch_time),0) FROM progress p WHERE p.student_id=s.id) watch_time
+       FROM students s ORDER BY s.created_at DESC LIMIT 10`).all(),
     topVideos: q(`SELECT v.id, v.title, c.name class, COUNT(p.student_id) viewers, COALESCE(AVG(p.percent),0) avg_percent,
        SUM(p.completed) completed FROM videos v JOIN classes c ON c.id=v.class_id LEFT JOIN progress p ON p.video_id=v.id
        WHERE v.status='ready' GROUP BY v.id ORDER BY viewers DESC LIMIT 6`).all(),
@@ -606,6 +610,23 @@ app.get('/api/admin/videos/:id/report', requireAdmin, (req, res) => {
   for (const e of q("SELECT pos FROM events WHERE video_id=? AND type='pause'").all(v.id))
     pauseHeat[Math.min(B - 1, Math.floor(e.pos / (v.duration || 1) * B))]++;
   res.json({ video: v, rows, heat, pauseHeat, rewatchHeat });
+});
+app.get('/api/admin/students.csv', requireAdmin, (req, res) => {
+  const rows = q(`SELECT s.name, s.email, s.phone, datetime(s.created_at/1000,'unixepoch','+6 hours') joined,
+      datetime(s.last_seen/1000,'unixepoch','+6 hours') last_seen, s.login_count logins,
+      (SELECT COUNT(*) FROM access a WHERE a.student_id=s.id) videos_allowed,
+      (SELECT COUNT(*) FROM progress p WHERE p.student_id=s.id) videos_started,
+      (SELECT COALESCE(SUM(completed),0) FROM progress p WHERE p.student_id=s.id) videos_finished,
+      (SELECT ROUND(COALESCE(SUM(watch_time),0)) FROM progress p WHERE p.student_id=s.id) watch_seconds,
+      (SELECT COUNT(*) FROM sessions se WHERE se.student_id=s.id) sessions,
+      (SELECT device || ' / ' || browser || ' / ' || os FROM sessions se WHERE se.student_id=s.id ORDER BY started_at DESC LIMIT 1) last_device,
+      (SELECT ip FROM sessions se WHERE se.student_id=s.id ORDER BY started_at DESC LIMIT 1) last_ip,
+      CASE WHEN s.blocked THEN 'blocked' ELSE '' END status
+      FROM students s ORDER BY s.created_at DESC`).all();
+  const cols = ['name', 'email', 'phone', 'joined', 'last_seen', 'logins', 'videos_allowed', 'videos_started', 'videos_finished', 'watch_seconds', 'sessions', 'last_device', 'last_ip', 'status'];
+  const esc = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
+  res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="students.csv"' });
+  res.send('\ufeff' + [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n'));
 });
 app.get('/api/admin/export.csv', requireAdmin, (req, res) => {
   const rows = q(`SELECT s.name, s.email, s.phone, c.name class, v.title video, ROUND(p.percent,1) percent,
