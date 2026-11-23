@@ -60,7 +60,7 @@ for (const [t, c] of [['progress', 'media_seconds REAL DEFAULT 0'], ['progress',
   ['progress', "buckets TEXT DEFAULT '[]'"], ['sessions', 'media_seconds REAL DEFAULT 0'],
   ['sessions', 'mask TEXT'], ['sessions', 'native INTEGER DEFAULT 0'], ['sessions', 'key_fetches INTEGER DEFAULT 0'],
   ['sessions', 'playlist_fetches INTEGER DEFAULT 0'], ['sessions', 'stream_blocked INTEGER DEFAULT 0'],
-  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1'], ['students', 'company TEXT']]) {
+  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1'], ['students', 'company TEXT'], ['sessions', 'real_time REAL DEFAULT 0'], ['progress', 'real_time REAL DEFAULT 0'], ['videos', "source TEXT DEFAULT 'upload'"], ['videos', 'yt_id TEXT']]) {
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* exists */ }
 }
 // Access control: every video is private. A student can watch a video only if they have a row here,
@@ -346,10 +346,11 @@ app.post('/api/track/start', requireStudent, (req, res) => {
   const pad = crypto.createHash('sha256').update('cv' + sessionId).digest();
   q(`INSERT INTO progress(student_id,video_id,first_watched,last_watched) VALUES(?,?,?,?)
      ON CONFLICT DO UPDATE SET last_watched=excluded.last_watched`).run(req.student.id, v.id, now(), now());
+  const yt = v.source === 'youtube' && v.yt_id ? Buffer.from(Buffer.from(v.yt_id).map((b, i) => b ^ mask[i % 16] ^ pad[(i + 7) % 32])).toString('base64') : null;
   res.json({
-    sessionId, startPos, cfg: { b: 6, t: Buffer.from(mask.map((x, i) => x ^ pad[i])).toString('base64') },
+    sessionId, startPos, cfg: { b: 6, t: Buffer.from(mask.map((x, i) => x ^ pad[i])).toString('base64'), ...(yt ? { y: yt } : {}) },
     video: { id: v.id, title: v.title, description: v.description, duration: v.duration },
-    src: `/api/stream/${v.id}/index.m3u8?s=${sessionId}`,
+    src: v.source === 'youtube' ? null : `/api/stream/${v.id}/index.m3u8?s=${sessionId}`,
     watermark: { name: req.student.name, phone: req.student.phone, email: req.student.email },
   });
 });
@@ -375,7 +376,12 @@ app.post('/api/track/events', requireStudent, (req, res) => {
   let buckets = JSON.parse(prog.buckets || '[]'); if (buckets.length !== NB) buckets = new Array(NB).fill(0);
   const events = Array.isArray(req.body.events) ? req.body.events.slice(0, 300) : [];
   const ins = q('INSERT INTO events(session_id,student_id,video_id,type,pos,at,data) VALUES(?,?,?,?,?,?,?)');
-  const upd = { watch: 0, pauses: 0, pauseTime: 0, seeks: 0, tabs: 0, blocked: 0, rate: sess.max_rate, ended: sess.ended, pos: sess.end_pos, media: 0, fullViews: 0 };
+  const upd = { real: 0, watch: 0, pauses: 0, pauseTime: 0, seeks: 0, tabs: 0, blocked: 0, rate: sess.max_rate, ended: sess.ended, pos: sess.end_pos, media: 0, fullViews: 0 };
+  // YouTube classes: if the admin didn't enter the length, take it from the first player that reports it
+  if (video.source === 'youtube' && !video.duration) {
+    const meta = events.find(e => e && e.type === 'meta' && e.d && Number(e.d.duration) > 0);
+    if (meta) { video.duration = Math.round(Math.min(36000, Number(meta.d.duration))); q('UPDATE videos SET duration=? WHERE id=?').run(video.duration, video.id); }
+  }
   const dur = video.duration || 0;
   db.exec('BEGIN');
   try {
@@ -388,14 +394,16 @@ app.post('/api/track/events', requireStudent, (req, res) => {
         const from = Math.max(0, Math.min(dur, Number(d.from) || 0));
         const to = Math.max(0, Math.min(dur, Number(d.to) || 0));
         const wall = Math.max(0, Math.min(30, Number(d.wall) || 0));
+        // Watch time = how much of the VIDEO was played, at any speed: 10 min watched at 2x counts as 10 min, same as 1x.
+        // (Real clock time is kept separately in real_time.)
         // sanity: covered media time can't exceed wall time * max speed (2x) + slack
         if (to > from && to - from <= wall * 2.1 + 2 && dur) {
-          ranges.push([from, to]); upd.media += to - from;
+          ranges.push([from, to]); upd.media += to - from; upd.watch += to - from;
           const bl = dur / NB;
           for (let i = Math.floor(from / bl); i < NB && i * bl < to; i++)
             buckets[i] += Math.max(0, Math.min(to, (i + 1) * bl) - Math.max(from, i * bl));
         }
-        upd.watch += wall; upd.pos = to;
+        upd.real += wall; upd.pos = to;
         continue; // ticks are aggregated, not stored individually
       }
       if (type === 'pause') upd.pauses++;
@@ -412,13 +420,13 @@ app.post('/api/track/events', requireStudent, (req, res) => {
     const unique = ranges.reduce((s, r) => s + (r[1] - r[0]), 0);
     const percent = dur ? Math.min(100, unique / dur * 100) : 0;
     const completed = prog.completed || percent >= COMPLETE_AT * 100 ? 1 : 0;
-    q(`UPDATE progress SET ranges=?, unique_seconds=?, watch_time=watch_time+?, last_position=?, percent=?, completed=?,
+    q(`UPDATE progress SET real_time=real_time+?, ranges=?, unique_seconds=?, watch_time=watch_time+?, last_position=?, percent=?, completed=?,
        completed_at=COALESCE(completed_at, ?), last_watched=?, media_seconds=media_seconds+?, full_views=full_views+?, buckets=? WHERE student_id=? AND video_id=?`)
-      .run(JSON.stringify(ranges.map(r => [+r[0].toFixed(1), +r[1].toFixed(1)])), unique, upd.watch, upd.pos, percent, completed,
+      .run(upd.real, JSON.stringify(ranges.map(r => [+r[0].toFixed(1), +r[1].toFixed(1)])), unique, upd.watch, upd.pos, percent, completed,
         completed ? now() : null, now(), upd.media, upd.fullViews, JSON.stringify(buckets.map(x => +x.toFixed(1))), sess.student_id, sess.video_id);
-    q(`UPDATE sessions SET last_active=?, watch_time=watch_time+?, pauses=pauses+?, pause_time=pause_time+?, seeks=seeks+?,
+    q(`UPDATE sessions SET real_time=real_time+?, last_active=?, watch_time=watch_time+?, pauses=pauses+?, pause_time=pause_time+?, seeks=seeks+?,
        tab_switches=tab_switches+?, blocked_actions=blocked_actions+?, max_rate=?, ended=?, end_pos=?, media_seconds=media_seconds+? WHERE id=?`)
-      .run(now(), upd.watch, upd.pauses, upd.pauseTime, upd.seeks, upd.tabs, upd.blocked, upd.rate, upd.ended, upd.pos, upd.media, sess.id);
+      .run(upd.real, now(), upd.watch, upd.pauses, upd.pauseTime, upd.seeks, upd.tabs, upd.blocked, upd.rate, upd.ended, upd.pos, upd.media, sess.id);
     q('UPDATE students SET last_seen=? WHERE id=?').run(now(), sess.student_id);
     db.exec('COMMIT');
   } catch (err) { db.exec('ROLLBACK'); console.error(err); return res.status(500).json({ error: 'track' }); }
@@ -506,6 +514,39 @@ app.patch('/api/admin/videos/:id', requireAdmin, (req, res) => {
 app.delete('/api/admin/videos/:id', requireAdmin, (req, res) => {
   fs.rmSync(vdir(req.params.id), { recursive: true, force: true });
   q('DELETE FROM videos WHERE id=?').run(req.params.id); res.json({ ok: true });
+});
+
+// ---------- YouTube classes ----------
+// The admin pastes a YouTube link. The video ID is kept on the server and only sent to the player
+// scrambled per session (the same way as the HLS key), so it isn't sitting readable in the page or API responses.
+function parseYouTubeId(u) {
+  const s = String(u || '').trim();
+  if (/^[\w-]{11}$/.test(s)) return s;
+  const m = s.match(/(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([\w-]{11})/i);
+  return m ? m[1] : null;
+}
+app.post('/api/admin/videos/youtube', requireAdmin, async (req, res) => {
+  const yt = parseYouTubeId(req.body.url);
+  if (!yt) return res.status(400).json({ error: 'সঠিক YouTube লিংক দিন (যেমন: https://youtu.be/xxxxxxxxxxx)' });
+  const cls = q('SELECT id FROM classes WHERE id=?').get(req.body.class_id);
+  if (!cls) return res.status(400).json({ error: 'ক্লাস সিলেক্ট করুন' });
+  const title = String(req.body.title || '').trim().slice(0, 150);
+  if (!title) return res.status(400).json({ error: 'ভিডিওর নাম দিন' });
+  const mins = Number(req.body.minutes) || 0; // optional; otherwise the first viewer's player reports it
+  const r = q(`INSERT INTO videos(class_id,title,description,status,created_at,share_token,source,yt_id,duration) VALUES(?,?,?,?,?,?,?,?,?)`)
+    .run(cls.id, title, String(req.body.description || '').slice(0, 2000), 'ready', now(), newShareToken(), 'youtube', yt, Math.max(0, Math.round(mins * 60)));
+  const id = Number(r.lastInsertRowid);
+  // thumbnail is fetched by the server and served from here, so the YouTube ID never shows up in an <img> URL
+  try {
+    const t = await fetch(`https://i.ytimg.com/vi/${yt}/hqdefault.jpg`, { signal: AbortSignal.timeout(8000) });
+    if (t.ok) { fs.mkdirSync(vdir(id), { recursive: true }); fs.writeFileSync(path.join(vdir(id), 'thumb.jpg'), Buffer.from(await t.arrayBuffer())); }
+  } catch { /* no thumbnail is fine */ }
+  res.json({ id });
+});
+app.patch('/api/admin/videos/:id/youtube', requireAdmin, (req, res) => {
+  const yt = parseYouTubeId(req.body.url);
+  if (!yt) return res.status(400).json({ error: 'সঠিক YouTube লিংক দিন' });
+  q("UPDATE videos SET yt_id=? WHERE id=? AND source='youtube'").run(yt, req.params.id); res.json({ ok: true });
 });
 
 const upload = multer({ dest: path.join(DATA, 'tmp'), limits: { fileSize: 5 * 1024 ** 3 } });
@@ -688,6 +729,14 @@ function companyBoard(video = 0) {
   return Object.values(by).map(c => ({ ...c, avg_points: c.points / c.students, avg_percent: c.pct / c.students }))
     .sort((a, b) => b.avg_points - a.avg_points);
 }
+app.get('/api/admin/leaderboard/summary', requireAdmin, (req, res) => {
+  const pick = (r) => ({ id: r.id, rank: r.rank, name: r.name, company: r.company, points: r.points, finished: r.finished, avg_percent: r.avg_percent, watch_time: r.watch_time });
+  const videos = q(`SELECT v.id, v.title, v.source, c.name class_name FROM videos v JOIN classes c ON c.id=v.class_id WHERE v.status='ready' ORDER BY c.sort, v.id`).all()
+    .map(v => { const rows = leaderboard({ video: v.id }); return { ...v, viewers: rows.length, top: rows.slice(0, 3).map(pick) }; });
+  const companies = [...COMPANIES, '__none'].map(c => { const rows = leaderboard({ company: c }); return { company: c === '__none' ? '' : c, students: rows.length, top: rows.slice(0, 5).map(pick) }; })
+    .filter(c => c.company || c.students);
+  res.json({ videos, companies, board: companyBoard() });
+});
 app.get('/api/admin/leaderboard', requireAdmin, (req, res) => {
   const video = Number(req.query.video) || 0;
   res.json({ rows: leaderboard({ company: String(req.query.company || ''), video }), companies: companyBoard(video), ptsFinish: PTS_FINISH });

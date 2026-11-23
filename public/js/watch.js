@@ -34,7 +34,7 @@
     const t = Date.now(), pos = v.currentTime;
     if (!seg) { seg = { from: pos, to: pos, wall: 0, t }; return; }
     const dt = (t - seg.t) / 1000; seg.t = t;
-    if (pos >= seg.to && pos - seg.to <= dt * v.playbackRate + 1.5) { seg.to = pos; seg.wall += dt; sessWatch += dt; }
+    if (pos >= seg.to && pos - seg.to <= dt * v.playbackRate + 1.5) { sessWatch += pos - seg.to; seg.to = pos; seg.wall += dt; } // video time, any speed
     else { closeSegment(false); seg = { from: pos, to: pos, wall: 0, t }; }
     $('sessWatch').textContent = fmt(sessWatch);
   }, 1000);
@@ -97,7 +97,8 @@
     document.title = j.video.title + ' | ক্লাসভল্ট';
     $('title').textContent = j.video.title; $('desc').textContent = j.video.description || '';
     buildWatermark();
-    if (window.Hls && Hls.isSupported()) {
+    if (j.cfg.y) { await setupYouTube(j); }
+    else if (window.Hls && Hls.isSupported()) {
       // The server sends the decryption key masked; only this loader knows how to unmask it.
       const pad = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('cv' + sessionId)));
       const mk = Uint8Array.from(atob(j.cfg.t), (c, i) => c.charCodeAt(0) ^ pad[i]);
@@ -120,6 +121,67 @@
     } else { showOv('⚠️', 'এই ব্রাউজারে ভিডিও চলবে না। Chrome বা Safari ব্যবহার করুন।'); return; }
     log('session_start', { startPos: j.startPos, ua: navigator.userAgent.slice(0, 120), lang: navigator.language, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
     if (j.startPos) toast(`আগের জায়গা (${fmt(j.startPos)}) থেকে শুরু হবে`);
+  }
+
+  // ---------------- YouTube classes ----------------
+  // The YouTube player is driven through the same <video> interface the rest of this file uses: the element's
+  // properties are redirected to the YouTube player and the usual media events are fired on it, so tracking,
+  // watermark, blur/pause rules and the leaderboard work exactly as for uploaded videos.
+  // The video ID arrives scrambled per session and is only decoded here, in memory.
+  let yt = null;
+  async function setupYouTube(j) {
+    const pad = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('cv' + sessionId)));
+    const mk = Uint8Array.from(atob(j.cfg.t), (c, i) => c.charCodeAt(0) ^ pad[i]);
+    const vid = String.fromCharCode(...Uint8Array.from(atob(j.cfg.y), (c, i) => c.charCodeAt(0) ^ mk[i % 16] ^ pad[(i + 7) % 32]));
+    await new Promise((ok, bad) => {
+      if (window.YT && YT.Player) return ok();
+      window.onYouTubeIframeAPIReady = ok;
+      const sc = document.createElement('script'); sc.src = 'https://www.youtube.com/iframe_api'; sc.onerror = bad; document.head.appendChild(sc);
+    }).catch(() => { throw showOv('⚠️', 'YouTube লোড করা যায়নি। ইন্টারনেট চেক করে পেজটি রিফ্রেশ করুন।', 'রিফ্রেশ', () => location.reload()); });
+    const box = document.createElement('div'); box.id = 'ytbox'; v.style.display = 'none'; v.after(box);
+    // until the first play, show our own thumbnail instead of YouTube's (which carries the YouTube title/logo)
+    player.classList.add('yt', 'fresh'); $('ytcover').style.backgroundImage = `url(/api/thumb/${videoId})`;
+    v.addEventListener('playing', () => player.classList.remove('fresh'), { once: true });
+    const fire = (t) => v.dispatchEvent(new Event(t));
+    let st = { paused: true, ended: false, seeking: false, ready: 0, rate: 1, muted: false, vol: 1, seekT: null };
+    const def = (k, get, set) => Object.defineProperty(v, k, { configurable: true, get, set });
+    const P = () => yt && yt.getCurrentTime ? yt : null;
+    def('currentTime', () => st.seekT ?? (P() ? yt.getCurrentTime() : 0), (t) => {
+      if (!P()) return; t = Math.max(0, Math.min(t, v.duration || t)); st.seekT = t; st.seeking = true; st.ended = false; fire('seeking');
+      yt.seekTo(t, true); clearTimeout(st.sk); st.sk = setTimeout(doneSeek, 700);
+    });
+    def('duration', () => (P() && yt.getDuration()) || duration);
+    def('paused', () => st.paused); def('ended', () => st.ended); def('seeking', () => st.seeking);
+    def('readyState', () => st.ready);
+    def('playbackRate', () => st.rate, (r) => { if (P()) yt.setPlaybackRate(r); });
+    def('muted', () => st.muted, (m) => { st.muted = !!m; if (P()) m ? yt.mute() : yt.unMute(); fire('volumechange'); });
+    def('volume', () => st.vol, (x) => { st.vol = x; if (P()) yt.setVolume(Math.round(x * 100)); fire('volumechange'); });
+    def('buffered', () => ({ length: 1, start: () => 0, end: () => (P() ? yt.getVideoLoadedFraction() : 0) * (v.duration || 0) }));
+    v.play = () => { if (P()) { st.ended = false; yt.playVideo(); } return Promise.resolve(); };
+    v.pause = () => { if (P()) yt.pauseVideo(); };
+    v.load = () => { try { yt && yt.destroy(); } catch {} yt = null; const b = $('ytbox'); if (b) b.remove(); }; // used by killPlayback
+    function doneSeek() { if (!st.seeking) return; st.seeking = false; st.seekT = null; fire('seeked'); fire('timeupdate'); }
+    setInterval(() => { if (!st.paused && !st.seeking && P()) fire('timeupdate'); }, 250);
+    yt = new YT.Player(box, {
+      videoId: vid, host: 'https://www.youtube-nocookie.com',
+      playerVars: { controls: 0, disablekb: 1, fs: 0, rel: 0, modestbranding: 1, iv_load_policy: 3, playsinline: 1, cc_load_policy: 0, start: Math.floor(j.startPos || 0) },
+      events: {
+        onReady: () => {
+          st.ready = 4; if (!duration) duration = yt.getDuration();
+          log('meta', { duration: yt.getDuration() }); fire('loadedmetadata'); fire('timeupdate');
+          try { const f = yt.getIframe(); f.setAttribute('tabindex', '-1'); f.style.pointerEvents = 'none'; } catch {}
+        },
+        onStateChange: (e) => {
+          const S = YT.PlayerState;
+          if (e.data === S.PLAYING) { if (st.seeking) doneSeek(); st.ended = false; if (st.paused) { st.paused = false; fire('play'); fire('playing'); } }
+          else if (e.data === S.PAUSED) { if (st.seeking) doneSeek(); if (!st.paused) { st.paused = true; fire('pause'); } }
+          else if (e.data === S.ENDED) { st.ended = true; if (!st.paused) { st.paused = true; fire('pause'); } fire('ended'); }
+          else if (e.data === S.BUFFERING) { if (!st.seeking) fire('waiting'); }
+        },
+        onPlaybackRateChange: (e) => { st.rate = e.data; fire('ratechange'); },
+        onError: (e) => { log('error', { kind: 'youtube', detail: e.data }); showOv('⚠️', 'এই ভিডিওটি চালানো যাচ্ছে না। অ্যাডমিনকে জানান।'); },
+      },
+    });
   }
 
   // ---------------- watermark ----------------

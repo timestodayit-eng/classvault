@@ -153,7 +153,7 @@ async function route() {
   try {
     if (r === 'videos') await viewVideos(main);
     else if (r === 'students') await viewStudents(main, id);
-    else if (r === 'leaderboard') await viewLeaderboard(main);
+    else if (r === 'leaderboard') await viewLeaderboard(main, id || 'overall');
     else if (r === 'student') await viewStudent(main, id);
     else if (r === 'video') await viewVideoReport(main, id);
     else await viewOverview(main);
@@ -199,15 +199,15 @@ async function viewOverview(main) {
 async function viewVideos(main) {
   const [classes, videos] = await Promise.all([api('/api/admin/classes'), api('/api/admin/videos')]);
   main.innerHTML = `<div class="head"><h1>ক্লাস ও ভিডিও</h1><div style="display:flex;gap:8px">
-    <button class="btn ghost" id="addClass">＋ নতুন ক্লাস</button><button class="btn" id="upload">⬆ ভিডিও আপলোড</button></div></div>
+    <button class="btn ghost" id="addClass">＋ নতুন ক্লাস</button><button class="btn ghost" id="ytAdd" style="color:#c00">▶ YouTube ভিডিও যোগ</button><button class="btn" id="upload">⬆ ভিডিও আপলোড</button></div></div>
     ${classes.map(c => {
       const vs = videos.filter(v => v.class_id === c.id);
       return `<div class="card panel cls-block"><div class="cls-head"><h3>${esc(c.name)} <span class="pill">${bn(vs.length)}টি ভিডিও</span></h3>
         <div style="display:flex;gap:6px"><button class="btn ghost sm" onclick="renameClass(${c.id}, '${esc(c.name).replace(/'/g, "\\'")}')">নাম বদলান</button>
         <button class="btn danger sm" onclick="delClass(${c.id})">মুছুন</button></div></div>
         ${vs.map(v => `<div class="vrow"><div class="vthumb" style="background-image:url(/api/thumb/${v.id})"></div>
-          <div><b>${esc(v.title)}</b>
-            <div class="vmeta">${v.status === 'ready' ? `<span>⏱ ${fmt(v.duration)}</span><span>👥 ${bn(v.viewers)} জন দেখেছে</span><span>👁 মোট ${bn(v.views)} বার</span><span>🔑 ${bn(v.access_count)} জনের অনুমতি</span>${v.share_enabled ? '' : '<span class="pill bad">লিংক বন্ধ</span>'}<span>✓ ${bn(v.completed)} জন শেষ করেছে</span><span>গড় ${pct(v.avg_percent)}</span>`
+          <div><b>${esc(v.title)}</b> ${v.source === 'youtube' ? '<span class="pill" style="background:#fee2e2;color:#b91c1c">▶ YouTube</span>' : ''}
+            <div class="vmeta">${v.status === 'ready' ? `<span>⏱ ${v.duration ? fmt(v.duration) : 'প্রথম বার চালালে জানা যাবে'}</span><span>👥 ${bn(v.viewers)} জন দেখেছে</span><span>👁 মোট ${bn(v.views)} বার</span><span>🔑 ${bn(v.access_count)} জনের অনুমতি</span>${v.share_enabled ? '' : '<span class="pill bad">লিংক বন্ধ</span>'}<span>✓ ${bn(v.completed)} জন শেষ করেছে</span><span>গড় ${pct(v.avg_percent)}</span>`
               : v.status === 'processing' ? `<span class="pill warn">⏳ প্রসেস হচ্ছে ${v.job != null ? bn(v.job) + '%' : ''}</span>` : `<span class="pill bad">সমস্যা: ${esc(v.error)}</span>`}</div></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.status === 'ready' ? `${v.share_enabled ? `<button class="btn sm" onclick="copyLink('${v.share_token}')">🔗 লিংক কপি</button>` : ''}<a class="btn ghost sm" href="#/video/${v.id}">শেয়ার ও রিপোর্ট</a>` : ''}<button class="btn danger sm" onclick="delVideo(${v.id})">মুছুন</button></div></div>`).join('')
           || '<div class="muted" style="padding:16px 18px">এই ক্লাসে এখনো কোনো ভিডিও নেই</div>'}</div>`;
@@ -218,6 +218,20 @@ async function viewVideos(main) {
     $('#cf', m).onsubmit = async (e) => { e.preventDefault(); try { await post('/api/admin/classes', Object.fromEntries(new FormData(e.target))); m.remove(); route(); } catch (er) { $('#cerr', m).textContent = er.message; } };
   };
   $('#upload').onclick = () => uploadModal(classes);
+  $('#ytAdd').onclick = () => {
+    if (!classes.length) return toast('প্রথমে একটি ক্লাস তৈরি করুন');
+    const m = modal(`<h2>▶ YouTube ভিডিও ক্লাস হিসেবে যোগ করুন</h2><form id="yf">
+      <label>ক্লাস</label><select class="input" name="class_id" required>${classes.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <label>YouTube লিংক</label><input class="input" name="url" placeholder="https://youtu.be/... বা https://www.youtube.com/watch?v=..." required>
+      <label>ভিডিওর নাম</label><input class="input" name="title" required>
+      <label>বিবরণ (ঐচ্ছিক)</label><textarea class="input" name="description" rows="2"></textarea>
+      <label>দৈর্ঘ্য, মিনিটে (ঐচ্ছিক, না দিলে প্রথম বার চালানোর সময় নিজে থেকে নেবে)</label><input class="input" name="minutes" type="number" step="0.1" min="0">
+      <div class="muted" style="font-size:12.5px;margin:8px 0">ভিডিওটি YouTube এ <b>Unlisted</b> রাখুন (Private ভিডিও অন্য সাইটে চলে না) এবং Embedding চালু রাখুন। স্টুডেন্টরা পেজে YouTube লিংক দেখতে পাবে না।</div>
+      <div class="err" id="yerr"></div><button class="btn" id="ybtn">যোগ করুন</button></form>`);
+    $('#yf', m).onsubmit = async (e) => { e.preventDefault(); $('#ybtn', m).disabled = true;
+      try { await post('/api/admin/videos/youtube', Object.fromEntries(new FormData(e.target))); m.remove(); toast('YouTube ভিডিও যোগ হয়েছে। এখন লিংক কপি করে শেয়ার করুন।'); route(); }
+      catch (er) { $('#yerr', m).textContent = er.message; $('#ybtn', m).disabled = false; } };
+  };
   if (videos.some(v => v.status === 'processing')) refreshTimer = setInterval(() => viewVideos(main).catch(() => {}), 3000);
 }
 window.renameClass = async (id, name) => {
@@ -261,33 +275,54 @@ function uploadModal(classes) {
 
 // ---------------- leaderboard (admin only) ----------------
 let lbFilter = { company: '', video: '' };
-async function viewLeaderboard(main) {
-  const qs = new URLSearchParams(lbFilter).toString();
-  const [d, videos] = await Promise.all([api('/api/admin/leaderboard?' + qs), api('/api/admin/videos')]); await companiesReady;
-  const medal = (r) => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : bn(r);
-  const top = d.rows.slice(0, 3);
-  main.innerHTML = `<div class="head"><h1>🏆 লিডারবোর্ড</h1>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">${companySelect('lbc', lbFilter.company)}
-      <select class="input" id="lbv" style="width:auto;min-width:220px"><option value="">সব ভিডিও মিলিয়ে</option>${videos.filter(v => v.status === 'ready').map(v => `<option value="${v.id}" ${String(v.id) === lbFilter.video ? 'selected' : ''}>${esc(v.class_name)} · ${esc(v.title)}</option>`).join('')}</select></div></div>
-  <div class="muted" style="margin:-6px 0 16px;font-size:13px">🔒 শুধু অ্যাডমিন দেখতে পান, স্টুডেন্টরা দেখতে পায় না। পয়েন্ট = প্রতি মিনিট নতুন অংশ দেখা = ১ পয়েন্ট, প্রতিটি ভিডিও শেষ করলে +${bn(d.ptsFinish)}। একই অংশ বারবার দেখলে পয়েন্ট বাড়ে না।</div>
-  ${top.length ? `<div class="podium">${[top[1], top[0], top[2]].map((r, i) => r ? `<div class="card pod p${r.rank > 3 ? 3 : r.rank} click" onclick="location.hash='#/student/${r.id}'">
-      <div class="m">${medal(r.rank)}</div><b>${esc(r.name)}</b><div>${co(r.company)}</div>
-      <div class="pts">${bn(r.points)} <small>পয়েন্ট</small></div><div class="muted" style="font-size:12.5px">${bn(r.finished)}টি শেষ · ${dur(r.unique_seconds)}</div></div>` : '<div></div>').join('')}</div>` : ''}
-  <div class="cols">
-    <div class="card panel"><h3>স্টুডেন্ট র‍্যাংকিং <span class="pill">${bn(d.rows.length)} জন</span></h3><div class="scroll"><table>
-      <tr><th>র‍্যাংক</th><th>নাম</th><th>কোম্পানি</th><th>পয়েন্ট</th><th>শেষ করেছে</th><th>গড় দেখা</th><th>নতুন অংশ দেখা</th><th>শেষ দেখা</th></tr>
-      ${d.rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.id}'"><td style="font-size:18px;font-weight:700">${medal(r.rank)}</td><td><b>${esc(r.name)}</b></td><td>${co(r.company)}</td>
-        <td><b style="color:var(--brand)">${bn(r.points)}</b></td><td>${bn(r.finished)} / ${bn(r.started)}</td><td style="min-width:100px">${bar(r.avg_percent)}<span class="muted" style="font-size:12px">${pct(r.avg_percent)}</span></td>
-        <td>${dur(r.unique_seconds)}</td><td class="muted">${ago(r.last_watched)}</td></tr>`).join('') || '<tr><td colspan=8 class="muted">এখনো কেউ ভিডিও দেখেনি</td></tr>'}
-    </table></div></div>
-    <div class="card panel"><h3>🏢 কোম্পানি র‍্যাংকিং</h3><table>
-      <tr><th>#</th><th>কোম্পানি</th><th>গড় পয়েন্ট</th><th>স্টুডেন্ট</th><th>শেষ করেছে</th></tr>
-      ${d.companies.map((c, i) => `<tr><td style="font-size:18px">${medal(i + 1)}</td><td>${co(c.company)}<div class="muted" style="font-size:12px">মোট ${bn(Math.round(c.points))} পয়েন্ট · গড়ে ${pct(c.avg_percent)}</div></td><td><b>${bn(Math.round(c.avg_points))}</b></td><td>${bn(c.students)}</td><td>${bn(c.finished)}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">কোনো ডাটা নেই</td></tr>'}
-    </table><div class="muted" style="padding:10px 18px;font-size:12px">গড় পয়েন্ট দিয়ে সাজানো, যাতে বেশি লোকের কোম্পানি শুধু সংখ্যার জোরে এগিয়ে না যায়।</div></div>
-  </div>`;
-  $('#lbc').onchange = (e) => { lbFilter.company = e.target.value; route(); };
-  $('#lbv').onchange = (e) => { lbFilter.video = e.target.value; route(); };
+const medal = (r) => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : bn(r);
+async function viewLeaderboard(main, tab = 'overall') {
+  const tabs = `<div class="tabs">${[['overall', '🌐 সব মিলিয়ে'], ['video', '🎬 ভিডিও অনুযায়ী'], ['company', '🏢 কোম্পানি অনুযায়ী']]
+    .map(([k, t]) => `<a href="#/leaderboard/${k}" class="${tab === k ? 'on' : ''}">${t}</a>`).join('')}</div>`;
+  const note = (pf) => `<div class="muted" style="margin:0 0 16px;font-size:13px">🔒 শুধু অ্যাডমিন দেখতে পান। পয়েন্ট = ভিডিওর নতুন অংশ প্রতি মিনিট ১ পয়েন্ট, প্রতিটি ভিডিও শেষ করলে +${bn(pf)}। যেকোনো স্পিডে (১x, ২x…) দেখলে একই হিসাব। একই অংশ বারবার দেখলে পয়েন্ট বাড়ে না।</div>`;
+  if (tab === 'overall' || (tab === 'video' && lbFilter.video)) {
+    const f = tab === 'overall' ? { company: lbFilter.company, video: '' } : { company: lbFilter.company, video: lbFilter.video };
+    const [d, videos] = await Promise.all([api('/api/admin/leaderboard?' + new URLSearchParams(f)), api('/api/admin/videos')]); await companiesReady;
+    const top = d.rows.slice(0, 3);
+    const vSel = tab === 'video' ? `<select class="input" id="lbv" style="width:auto;min-width:220px"><option value="">← সব ভিডিওর সারাংশ</option>${videos.filter(v => v.status === 'ready').map(v => `<option value="${v.id}" ${String(v.id) === lbFilter.video ? 'selected' : ''}>${esc(v.class_name)} · ${esc(v.title)}</option>`).join('')}</select>` : '';
+    main.innerHTML = `<div class="head"><h1>🏆 লিডারবোর্ড</h1><div style="display:flex;gap:8px;flex-wrap:wrap">${companySelect('lbc', lbFilter.company)}${vSel}</div></div>${tabs}${note(d.ptsFinish)}
+    ${top.length ? `<div class="podium">${[top[1], top[0], top[2]].map(r => r ? `<div class="card pod p${r.rank > 3 ? 3 : r.rank} click" onclick="location.hash='#/student/${r.id}'">
+        <div class="m">${medal(r.rank)}</div><b>${esc(r.name)}</b><div>${co(r.company)}</div>
+        <div class="pts">${bn(r.points)} <small>পয়েন্ট</small></div><div class="muted" style="font-size:12.5px">${bn(r.finished)}টি শেষ · ${dur(r.watch_time)}</div></div>` : '<div></div>').join('')}</div>` : ''}
+    <div class="cols">
+      <div class="card panel"><h3>স্টুডেন্ট র‍্যাংকিং <span class="pill">${bn(d.rows.length)} জন</span></h3><div class="scroll"><table>
+        <tr><th>র‍্যাংক</th><th>নাম</th><th>কোম্পানি</th><th>পয়েন্ট</th><th>শেষ করেছে</th><th>কতটুকু দেখেছে</th><th>দেখার সময়</th><th>শেষ দেখা</th></tr>
+        ${d.rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.id}'"><td style="font-size:18px;font-weight:700">${medal(r.rank)}</td><td><b>${esc(r.name)}</b></td><td>${co(r.company)}</td>
+          <td><b style="color:var(--brand)">${bn(r.points)}</b></td><td>${bn(r.finished)} / ${bn(r.started)}</td><td style="min-width:100px">${bar(r.avg_percent)}<span class="muted" style="font-size:12px">${pct(r.avg_percent)}</span></td>
+          <td>${dur(r.watch_time)}</td><td class="muted">${ago(r.last_watched)}</td></tr>`).join('') || '<tr><td colspan=8 class="muted">এখনো কেউ দেখেনি</td></tr>'}
+      </table></div></div>
+      <div class="card panel"><h3>🏢 কোম্পানি র‍্যাংকিং</h3><table>
+        <tr><th>#</th><th>কোম্পানি</th><th>গড় পয়েন্ট</th><th>স্টুডেন্ট</th><th>শেষ করেছে</th></tr>
+        ${d.companies.map((c, i) => `<tr><td style="font-size:18px">${medal(i + 1)}</td><td>${co(c.company)}<div class="muted" style="font-size:12px">মোট ${bn(Math.round(c.points))} পয়েন্ট · গড়ে ${pct(c.avg_percent)}</div></td><td><b>${bn(Math.round(c.avg_points))}</b></td><td>${bn(c.students)}</td><td>${bn(c.finished)}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">কোনো ডাটা নেই</td></tr>'}
+      </table></div>
+    </div>`;
+    $('#lbc').onchange = (e) => { lbFilter.company = e.target.value; route(); };
+    if ($('#lbv')) $('#lbv').onchange = (e) => { lbFilter.video = e.target.value; route(); };
+    return;
+  }
+  const d = await api('/api/admin/leaderboard/summary'); await companiesReady;
+  const mini = (rows, n) => rows.length ? `<table>${rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.id}'"><td style="width:34px;font-size:17px">${medal(r.rank)}</td><td><b>${esc(r.name)}</b><div>${co(r.company)}</div></td><td style="text-align:right"><b style="color:var(--brand)">${bn(r.points)}</b><div class="muted" style="font-size:11.5px">পয়েন্ট</div></td></tr>`).join('')}</table>` : '<div class="muted" style="padding:14px 18px">এখনো কেউ দেখেনি</div>';
+  if (tab === 'video') {
+    main.innerHTML = `<div class="head"><h1>🏆 লিডারবোর্ড</h1></div>${tabs}${note(20)}
+      <div class="lbgrid">${d.videos.map(v => `<div class="card panel"><h3 style="font-size:15px"><span>${esc(v.title)} ${v.source === 'youtube' ? '<span class="pill" style="background:#fee2e2;color:#b91c1c">▶ YouTube</span>' : ''}<div class="muted" style="font-size:12px;font-weight:400">${esc(v.class_name)} · ${bn(v.viewers)} জন দেখেছে</div></span>
+        <button class="btn ghost sm" onclick="lbVideo(${v.id})">পুরো তালিকা →</button></h3>${mini(v.top)}</div>`).join('') || '<div class="card" style="padding:30px">কোনো ভিডিও নেই</div>'}</div>`;
+  } else {
+    main.innerHTML = `<div class="head"><h1>🏆 লিডারবোর্ড</h1></div>${tabs}${note(20)}
+      <div class="card panel" style="margin-bottom:18px"><h3>কোম্পানি র‍্যাংকিং <span class="muted" style="font-size:12.5px;font-weight:400">গড় পয়েন্ট দিয়ে সাজানো, যাতে বেশি লোকের কোম্পানি শুধু সংখ্যার জোরে না এগোয়</span></h3><table>
+        <tr><th>#</th><th>কোম্পানি</th><th>গড় পয়েন্ট</th><th>মোট পয়েন্ট</th><th>স্টুডেন্ট</th><th>ভিডিও শেষ</th><th>গড় দেখা</th></tr>
+        ${d.board.map((c, i) => `<tr class="click" onclick="lbCompany('${esc(c.company || '__none')}')"><td style="font-size:20px">${medal(i + 1)}</td><td>${co(c.company)}</td><td><b style="color:var(--brand);font-size:16px">${bn(Math.round(c.avg_points))}</b></td><td>${bn(Math.round(c.points))}</td><td>${bn(c.students)}</td><td>${bn(c.finished)}</td><td style="min-width:110px">${bar(c.avg_percent)}<span class="muted" style="font-size:12px">${pct(c.avg_percent)}</span></td></tr>`).join('') || '<tr><td colspan=7 class="muted">কোনো ডাটা নেই</td></tr>'}
+      </table></div>
+      <div class="lbgrid">${d.companies.map(c => `<div class="card panel"><h3 style="font-size:15px"><span>${co(c.company)} <span class="muted" style="font-size:12px;font-weight:400">${bn(c.students)} জন</span></span>
+        <button class="btn ghost sm" onclick="lbCompany('${esc(c.company || '__none')}')">পুরো তালিকা →</button></h3>${mini(c.top)}</div>`).join('')}</div>`;
+  }
 }
+window.lbVideo = (id) => { lbFilter.video = String(id); location.hash = '#/leaderboard/video'; route(); };
+window.lbCompany = (c) => { lbFilter.company = c; lbFilter.video = ''; location.hash = '#/leaderboard/overall'; route(); };
 
 // ---------------- students ----------------
 async function viewStudents(main, preset) {
