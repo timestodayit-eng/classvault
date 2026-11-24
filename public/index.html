@@ -4,6 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ক্লাসভল্ট | ক্লাস ভিডিও</title>
 <link rel="stylesheet" href="/css/app.css">
+<script src="/js/otp.js"></script>
 <style>
 .hero{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr}
 .hero-l{background:linear-gradient(150deg,#3730a3,#4f46e5 45%,#7c3aed);color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between}
@@ -49,18 +50,14 @@ async function api(url, body) {
   return j;
 }
 
-async function fillCompanies(sel) {
-  const list = await api('/api/companies').catch(() => []);
-  sel.insertAdjacentHTML('beforeend', list.map(c => `<option>${esc(c)}</option>`).join(''));
-}
-function renderLogin(me) {
+function renderLogin() {
   $('#app').innerHTML = `
   <div class="hero">
     <div class="hero-l">
       <div class="logo" style="color:#fff"><b>▶</b> ক্লাসভল্ট</div>
       <div>
         <h1>তোমার ক্লাসের সব ভিডিও,<br>এক জায়গায়।</h1>
-        <p>কোনো পাসওয়ার্ড বা সাইন আপ লাগবে না। শুধু নাম, ইমেইল আর ফোন নম্বর দিয়ে ঢুকে যাও।</p>
+        <p>কোনো পাসওয়ার্ড লাগবে না। মোবাইল নম্বর দাও, SMS এ আসা কোড দিয়ে ঢুকে যাও।</p>
         <div class="feat">
           <div>📚 ক্লাস অনুযায়ী সাজানো ভিডিও</div>
           <div>⏯️ যেখানে থেমেছিলে, সেখান থেকেই আবার শুরু</div>
@@ -70,27 +67,14 @@ function renderLogin(me) {
       <small style="opacity:.6">© ক্লাসভল্ট</small>
     </div>
     <div class="hero-r">
-      <form class="card login" id="f">
+      <div class="card login">
         <h2>ভিডিও দেখতে ঢুকুন</h2>
-        <div class="muted">প্রথমবার হলে আপনার অ্যাকাউন্ট নিজে থেকেই তৈরি হয়ে যাবে।</div>
-        <label>আপনার নাম</label><input class="input" name="name" placeholder="যেমন: রাফি আহমেদ" required autocomplete="name">
-        <label>ইমেইল</label><input class="input" name="email" type="email" placeholder="you@example.com" required autocomplete="email">
-        <label>ফোন নম্বর</label><input class="input" name="phone" type="tel" placeholder="01XXXXXXXXX" required autocomplete="tel">
-        <label>আপনি কোন কোম্পানির?</label><select class="input" name="company" id="company" required><option value="">কোম্পানি বেছে নিন</option></select>
-        <div class="err" id="err"></div>
-        <button class="btn" style="width:100%;justify-content:center;margin-top:6px;padding:12px">প্রবেশ করুন →</button>
-        <p class="muted" style="font-size:12.5px;margin:14px 0 0">পরের বার একই ইমেইল ও ফোন নম্বর দিলেই আপনার আগের সব অগ্রগতি পাবেন।</p>
-      </form>
+        <div class="muted">মোবাইল নম্বর দিয়ে লগইন। প্রথমবার হলে প্রোফাইল নিজে থেকেই তৈরি হবে।</div>
+        <div id="otp"></div>
+      </div>
     </div>
   </div>`;
-  fillCompanies($('#company'));
-  if (me) { const f = $('#f'); f.elements.name.value = me.name; f.elements.email.value = me.email; f.elements.phone.value = me.phone; $('#err').textContent = 'আপনি কোন কোম্পানির, সেটা বেছে নিয়ে আবার প্রবেশ করুন।'; }
-  $('#f').onsubmit = async (e) => {
-    e.preventDefault();
-    const fd = Object.fromEntries(new FormData(e.target));
-    $('#err').textContent = '';
-    try { await api('/api/login', fd); boot(); } catch (er) { $('#err').textContent = er.message; }
-  };
+  otpLogin($('#otp'), { via: 'login', onDone: () => boot() });
 }
 
 async function renderCatalog(me) {
@@ -135,7 +119,7 @@ async function renderCatalog(me) {
 }
 
 async function boot() {
-  try { const me = await api('/api/me'); if (!me.company) return renderLogin(me); await renderCatalog(me); } catch { renderLogin(); }
+  try { const me = await api('/api/me'); await renderCatalog(me); } catch { renderLogin(); }
 }
 boot();
 </script>

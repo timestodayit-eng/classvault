@@ -54,3 +54,10 @@ tr.click{cursor:pointer}tr.click:hover td{background:#fafbff}
 .tabs a{padding:8px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--line);color:inherit;text-decoration:none;font-weight:600;font-size:14px}
 .tabs a.on{background:var(--brand);border-color:var(--brand);color:#fff}
 .lbgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.otp-f label{display:block;margin:12px 0 6px;font-weight:600;font-size:14px}
+.otp-f .otp-btn{width:100%;justify-content:center;margin-top:10px;padding:12px}
+.otp-f .otp-btn:disabled{opacity:.6;cursor:wait}
+.otp-code{font-size:26px;letter-spacing:12px;text-align:center;font-weight:700}
+.otp-hint{font-size:12.5px;opacity:.75;margin:12px 0 0}
+.otp-sent{font-size:14px;margin-bottom:4px;line-height:1.5}.otp-sent a{margin-left:6px}
+.otp-test{margin-top:8px;font-size:12.5px;background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px}

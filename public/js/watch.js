@@ -51,24 +51,13 @@
       if (!c.ok) { showOv('🔗', 'লিংকটি কাজ করছে না।'); return false; }
       videoId = (await c.json()).videoId; return true;
     };
-    // The form shows every time a share link is opened (it collects viewer info; it isn't a password check).
-    // On a device that was used before, the last details are filled in so it's one tap.
+    // Already signed in (with the OTP login) → straight in. Otherwise: mobile number → SMS code → (first time) profile.
+    if (j.me) { $('gate').classList.remove('show'); return claim(); }
     $('big').style.display = 'none';
     $('gateTitle').textContent = j.video.title;
-    const f = $('gateForm');
-    if (j.me) { f.elements.name.value = j.me.name; f.elements.email.value = j.me.email; f.elements.phone.value = j.me.phone; }
-    fetch('/api/companies').then(r => r.json()).then(l => { l.forEach(c => $('gateCompany').add(new Option(c, c))); if (j.me && j.me.company) $('gateCompany').value = j.me.company; }).catch(() => {});
     $('gate').classList.add('show');
     return new Promise((resolve) => {
-      $('gateForm').onsubmit = async (e) => {
-        e.preventDefault(); $('gateErr').textContent = '';
-        const body = { ...Object.fromEntries(new FormData(e.target)), via: 'link', token: shareToken };
-        const l = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const lj = await l.json().catch(() => ({}));
-        if (!l.ok) { $('gateErr').textContent = lj.error || 'সমস্যা হয়েছে'; return; }
-        $('gate').classList.remove('show'); $('big').style.display = '';
-        resolve(claim());
-      };
+      otpLogin($('gateOtp'), { via: 'link', token: shareToken, onDone: () => { $('gate').classList.remove('show'); $('big').style.display = ''; resolve(claim()); } });
     });
   }
 

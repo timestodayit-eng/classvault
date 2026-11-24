@@ -132,6 +132,7 @@ function shell() {
         <a href="#/videos" data-r="videos">🎬 ক্লাস ও ভিডিও</a>
         <a href="#/students" data-r="students">👥 স্টুডেন্ট</a>
         <a href="#/leaderboard" data-r="leaderboard">🏆 লিডারবোর্ড</a>
+        <a href="#/settings" data-r="settings">⚙️ সেটিংস (SMS)</a>
       </nav>
       <div class="foot" style="margin-top:auto;display:grid;gap:8px">
         <a class="btn ghost sm" href="/api/admin/students.csv" style="justify-content:center">⬇ স্টুডেন্ট তালিকা (CSV)</a>
@@ -153,6 +154,7 @@ async function route() {
   try {
     if (r === 'videos') await viewVideos(main);
     else if (r === 'students') await viewStudents(main, id);
+    else if (r === 'settings') await viewSettings(main);
     else if (r === 'leaderboard') await viewLeaderboard(main, id || 'overall');
     else if (r === 'student') await viewStudent(main, id);
     else if (r === 'video') await viewVideoReport(main, id);
@@ -324,6 +326,39 @@ async function viewLeaderboard(main, tab = 'overall') {
 window.lbVideo = (id) => { lbFilter.video = String(id); location.hash = '#/leaderboard/video'; route(); };
 window.lbCompany = (c) => { lbFilter.company = c; lbFilter.video = ''; location.hash = '#/leaderboard/overall'; route(); };
 
+// ---------------- settings: SMS gateway for OTP ----------------
+async function viewSettings(main) {
+  const d = await api('/api/admin/sms');
+  const names = { test: '🧪 টেস্ট মোড (SMS যাবে না, কোড নিচে দেখাবে)', bulksmsbd: 'BulkSMSBD (bulksmsbd.net)', alpha: 'Alpha SMS (sms.net.bd)', custom: 'অন্য কোম্পানি (কাস্টম লিংক)' };
+  main.innerHTML = `<div class="head"><h1>⚙️ সেটিংস</h1></div>
+  ${d.provider === 'test' ? '<div class="card" style="padding:14px 18px;margin-bottom:16px;background:#fef3c7;border-color:#fcd34d;color:#92400e"><b>এখন টেস্ট মোড চালু।</b> স্টুডেন্টদের ফোনে SMS যাচ্ছে না, কোড শুধু নিচের তালিকায় দেখা যাচ্ছে। আসল ব্যবহারের আগে BulkSMSBD বেছে API key দিন।</div>' : ''}
+  <div class="cols"><div class="card panel"><h3>📱 OTP SMS সেটিংস</h3><form id="smsF" style="padding:6px 18px 18px">
+    <label>SMS কোম্পানি</label><select class="input" name="provider">${d.providers.map(p => `<option value="${p}" ${p === d.provider ? 'selected' : ''}>${names[p] || p}</option>`).join('')}</select>
+    <div class="pv pv-bulksmsbd pv-alpha pv-custom"><label>API Key ${d.api_key_set ? `<span class="muted" style="font-weight:400">(সেভ করা আছে ${esc(d.api_key_hint)}, বদলাতে চাইলে নতুনটা লিখুন)</span>` : ''}</label>
+      <input class="input" name="api_key" autocomplete="off" placeholder="${d.api_key_set ? 'খালি রাখলে আগেরটাই থাকবে' : 'আপনার API key'}"></div>
+    <div class="pv pv-bulksmsbd pv-alpha"><label>Sender ID <span class="muted" style="font-weight:400">(BulkSMSBD প্যানেলে যে Sender ID দেখায়)</span></label><input class="input" name="sender_id" value="${esc(d.sender_id)}" placeholder="যেমন: 8809617xxxxxx"></div>
+    <div class="pv pv-custom"><label>লিংক <span class="muted" style="font-weight:400">({to} = নম্বর, {msg} = মেসেজ, {key} = API key)</span></label><input class="input" name="custom_url" value="${esc(d.custom_url)}" placeholder="https://.../send?key={key}&to={to}&text={msg}"></div>
+    <label>SMS এর লেখা <span class="muted" style="font-weight:400">({code} এর জায়গায় কোড বসবে। ইংরেজিতে লিখলে খরচ কম)</span></label><textarea class="input" name="message" rows="2">${esc(d.message)}</textarea>
+    <div class="err" id="smsErr"></div><button class="btn">সেভ করুন</button></form></div>
+    <div class="card panel"><h3>✉️ টেস্ট SMS পাঠান</h3><form id="testF" style="padding:6px 18px 18px;display:grid;gap:8px">
+      <div class="muted" style="font-size:13px">সেভ করার পর নিজের নম্বরে একটা টেস্ট SMS পাঠিয়ে দেখুন ঠিকমতো যাচ্ছে কিনা।</div>
+      <input class="input" name="phone" placeholder="01XXXXXXXXX" required><div class="err" id="testErr"></div><button class="btn ghost">টেস্ট SMS পাঠান</button></form></div></div>
+  <div class="card panel" style="margin-top:18px"><h3>🔐 সাম্প্রতিক OTP <span class="muted" style="font-size:12.5px;font-weight:400">কোড শুধু টেস্ট মোডে দেখা যায়, আসল মোডে কোড কোথাও সেভ হয় না</span></h3><div class="scroll"><table>
+    <tr><th>কখন</th><th>নম্বর</th><th>কে</th><th>অবস্থা</th><th>কোড (টেস্ট মোড)</th></tr>
+    ${d.log.map(l => `<tr><td class="muted">${ago(l.at)}</td><td>${esc(l.phone)}</td><td>${l.name ? esc(l.name) : '<span class="muted">নতুন</span>'}</td>
+      <td>${l.ok ? `<span class="pill ok">✓ ${l.provider === 'test' ? 'টেস্ট' : 'পাঠানো হয়েছে'}</span>` : `<span class="pill bad" title="${esc(l.error)}">✗ ব্যর্থ</span><div class="muted" style="font-size:12px">${esc(l.error)}</div>`}</td>
+      <td style="font-size:18px;font-weight:700;letter-spacing:3px">${esc(l.test_code || '')}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">এখনো কোনো OTP পাঠানো হয়নি</td></tr>'}
+  </table></div></div>`;
+  const f = $('#smsF'); const showPv = () => f.querySelectorAll('.pv').forEach(x => { x.style.display = x.classList.contains('pv-' + f.provider.value) ? '' : 'none'; });
+  f.provider.onchange = showPv; showPv();
+  f.onsubmit = async (e) => { e.preventDefault(); $('#smsErr').textContent = '';
+    try { await post('/api/admin/sms', Object.fromEntries(new FormData(f))); toast('সেভ হয়েছে'); route(); } catch (er) { $('#smsErr').textContent = er.message; } };
+  $('#testF').onsubmit = async (e) => { e.preventDefault(); $('#testErr').textContent = '';
+    try { const r = await post('/api/admin/sms/test', Object.fromEntries(new FormData(e.target))); toast(r.test ? 'টেস্ট মোড: SMS যায়নি, তালিকায় দেখুন' : 'SMS পাঠানো হয়েছে, ফোন চেক করুন'); route(); }
+    catch (er) { $('#testErr').textContent = er.message; } };
+  refreshTimer = setInterval(() => { if (location.hash === '#/settings' && !document.activeElement.closest('form')) viewSettings(main).catch(() => {}); }, 10000);
+}
+
 // ---------------- students ----------------
 async function viewStudents(main, preset) {
   const list = await api('/api/admin/students'); await companiesReady;
@@ -388,7 +423,7 @@ async function viewStudent(main, id) {
     <tr><th>কখন</th><th>নাম</th><th>কোম্পানি</th><th>ফোন</th><th>ইমেইল</th><th>কোথা থেকে</th><th></th></tr>
     ${entries.map(f => `<tr><td class="muted">${dt(f.at)}</td><td>${esc(f.name)}</td><td>${co(f.company)}</td><td>${esc(f.phone)}</td><td>${esc(f.email)}</td>
       <td>${f.via === 'link' ? '🔗 শেয়ার লিংক' + (f.video ? `<div class="muted" style="font-size:12px">${esc(f.video)}</div>` : '') : '🏠 লগইন পেজ'}</td>
-      <td>${({ new: '<span class="pill ok">নতুন</span>', same: '', email: '<span class="pill warn">ফোন আলাদা</span>', phone: '<span class="pill warn">ইমেইল আলাদা</span>', mixed: '<span class="pill warn">ফোন অন্যজনের</span>' })[f.matched] || ''}</td></tr>`).join('')
+      <td>${({ new: '<span class="pill ok">নতুন প্রোফাইল</span>', otp: '<span class="pill brand">🔐 OTP লগইন</span>', same: '', email: '<span class="pill warn">ফোন আলাদা</span>', phone: '<span class="pill warn">ইমেইল আলাদা</span>', mixed: '<span class="pill warn">ফোন অন্যজনের</span>' })[f.matched] || ''}</td></tr>`).join('')
       || '<tr><td colspan=7 class="muted">এখনো কোনো এন্ট্রি নেই (এই আপডেটের আগের লগইন এখানে নেই)</td></tr>'}
   </table></div></div>
   <div class="card panel"><h3>সব সেশন <span class="muted" style="font-weight:400;font-size:13px">ক্লিক করলে প্রতিটি অ্যাকশনের টাইমলাইন দেখাবে</span></h3><div class="scroll"><table>
