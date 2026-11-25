@@ -61,7 +61,7 @@ for (const [t, c] of [['progress', 'media_seconds REAL DEFAULT 0'], ['progress',
   ['progress', "buckets TEXT DEFAULT '[]'"], ['sessions', 'media_seconds REAL DEFAULT 0'],
   ['sessions', 'mask TEXT'], ['sessions', 'native INTEGER DEFAULT 0'], ['sessions', 'key_fetches INTEGER DEFAULT 0'],
   ['sessions', 'playlist_fetches INTEGER DEFAULT 0'], ['sessions', 'stream_blocked INTEGER DEFAULT 0'],
-  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1'], ['students', 'company TEXT'], ['sessions', 'real_time REAL DEFAULT 0'], ['progress', 'real_time REAL DEFAULT 0'], ['videos', "source TEXT DEFAULT 'upload'"], ['videos', 'yt_id TEXT']]) {
+  ['videos', 'share_token TEXT'], ['videos', 'share_enabled INTEGER DEFAULT 1'], ['students', 'company TEXT'], ['sessions', 'real_time REAL DEFAULT 0'], ['progress', 'real_time REAL DEFAULT 0'], ['videos', "source TEXT DEFAULT 'upload'"], ['videos', 'yt_id TEXT'], ['students', 'designation TEXT']]) {
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch { /* exists */ }
 }
 // Access control: every video is private. A student can watch a video only if they have a row here,
@@ -69,6 +69,19 @@ for (const [t, c] of [['progress', 'media_seconds REAL DEFAULT 0'], ['progress',
 db.exec('CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT)');
 const getSetting = (k, d = '') => (db.prepare('SELECT v FROM settings WHERE k=?').get(k) || { v: d }).v;
 const setSetting = (k, v) => db.prepare('INSERT INTO settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, String(v ?? ''));
+// ---------- Officer allowlist ----------
+// Only mobile numbers on this list can get a login code. The admin imports the officers' list (pasted from Excel)
+// and can add/remove numbers by hand. Name/company/designation/email from the list are pre-filled on first login.
+db.exec(`CREATE TABLE IF NOT EXISTS allowlist(phone TEXT PRIMARY KEY, name TEXT, company TEXT, designation TEXT, email TEXT,
+  alt_phone TEXT, source TEXT, added_at INTEGER)`);
+const allowCount = () => db.prepare('SELECT COUNT(*) c FROM allowlist').get().c;
+// enforced when switched on (default) and the list isn't empty, so an empty list never locks everyone out
+const allowEnforced = () => getSetting('allowlist_enabled', '1') === '1' && allowCount() > 0;
+const allowRow = (phone) => db.prepare('SELECT * FROM allowlist WHERE phone=? OR phone=?').get(phone, String(phone).replace('+', ''));
+const isAllowed = (phone) => !allowEnforced() || !!allowRow(phone);
+const DEFAULT_NOTICE = 'আপনার নম্বরটি লগইনের তালিকায় নেই। লগইন করার অনুমতির জন্য দয়া করে জনাব খালিদ সাইফুল স্যার অথবা আপনার ঊর্ধ্বতন অফিসারের সাথে যোগাযোগ করুন এবং আপনার তথ্য জমা দিন।';
+const loginNotice = () => getSetting('login_notice', DEFAULT_NOTICE) || DEFAULT_NOTICE;
+
 // Migration for OTP login: the phone number is now the identity, so email no longer has to be unique.
 // SQLite can't drop a UNIQUE constraint in place, so the table is rebuilt once (all rows and ids are kept).
 if (/email TEXT NOT NULL UNIQUE/.test(db.prepare("SELECT sql FROM sqlite_master WHERE name='students'").get().sql)) {
@@ -138,7 +151,7 @@ function currentStudent(req) {
   const p = verify(req.cookies.sid);
   if (!p || p.t !== 's' || p.v !== SESSION_VER) return null;
   const s = q('SELECT * FROM students WHERE id=?').get(p.id);
-  if (!s || s.blocked) return null;
+  if (!s || s.blocked || !isAllowed(s.phone)) return null; // taken off the officer list → signed out
   return s;
 }
 function requireStudent(req, res, next) {
@@ -158,7 +171,7 @@ const bnDigits = (x) => String(x || '').replace(/[০-৯]/g, d => '০১২৩
 const normPhone = (p) => { let d = bnDigits(p).replace(/\D/g, ''); if (d.startsWith('880')) d = '0' + d.slice(3); return d; };
 
 // Companies students can pick at login (admin can filter reports by these).
-const COMPANIES = ['Creative International', 'Coastal Manpower', 'SM Enterprise'];
+const COMPANIES = ['Creative International', 'Coastal Manpower', 'SM Enterprise', 'Creative Group'];
 app.get('/api/companies', (req, res) => res.json(COMPANIES));
 // ---------- Phone number + OTP login ----------
 // The mobile number is the person's identity: one number = one profile. Every login needs a one-time code sent by SMS.
@@ -217,6 +230,10 @@ app.post('/api/otp/send', async (req, res) => {
   const fresh = !o || t - o.hour_start > 36e5;
   if (!fresh && o.hour_count >= OTP_PER_HOUR) return res.status(429).json({ error: 'এই নম্বরে এক ঘণ্টায় অনেকবার কোড পাঠানো হয়েছে। পরে চেষ্টা করুন।' });
   const blocked = findByPhone(phone); if (blocked && blocked.blocked) return res.status(403).json({ error: 'আপনার অ্যাক্সেস বন্ধ করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
+  if (!isAllowed(phone)) {
+    q('INSERT INTO otp_log(phone,at,ok,provider,error,test_code,ip) VALUES(?,?,0,?,?,NULL,?)').run(phone, t, 'blocked', 'not_on_list', req.ip);
+    return res.status(403).json({ notAllowed: true, error: loginNotice() });
+  }
   const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0'), cfg = smsCfg();
   const r = await sendSms(cfg, phone, cfg.message.replace('{code}', code));
   q('INSERT INTO otp_log(phone,at,ok,provider,error,test_code,ip) VALUES(?,?,?,?,?,?,?)').run(phone, t, r.ok ? 1 : 0, cfg.provider, r.error || null, r.test ? code : null, req.ip);
@@ -237,23 +254,30 @@ app.post('/api/otp/verify', (req, res) => {
   const good = code.length === 6 && crypto.timingSafeEqual(Buffer.from(otpHash(phone, code)), Buffer.from(o.code_hash));
   if (!good) { q('UPDATE otps SET attempts=attempts+1 WHERE phone=?').run(phone); return res.status(400).json({ error: `কোড মেলেনি। আর ${String(OTP_MAX_TRIES - o.attempts - 1).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d])} বার চেষ্টা করতে পারবেন।` }); }
   q('UPDATE otps SET code_hash=NULL WHERE phone=?').run(phone); // one use only
-  const s = findByPhone(phone);
+  if (!isAllowed(phone)) return res.status(403).json({ notAllowed: true, error: loginNotice() });
+  const s = findByPhone(phone), al = allowRow(phone);
   if (s && s.blocked) return res.status(403).json({ error: 'আপনার অ্যাক্সেস বন্ধ করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' });
-  if (profileDone(s)) return startStudentSession(req, res, s, 'otp');
-  // number verified but no (complete) profile yet → one-time form; the ticket proves the number was verified
-  res.json({ needProfile: true, ticket: sign({ t: 'otp', phone, exp: now() + 20 * 60e3 }), prefill: s ? { name: s.name, email: s.email, company: s.company } : null });
+  if (s && al && !s.designation && al.designation) q('UPDATE students SET designation=? WHERE id=?').run(al.designation, s.id);
+  if (profileDone(s)) return startStudentSession(req, res, findByPhone(phone), 'otp');
+  // number verified but no (complete) profile yet → one-time form, pre-filled from the officer list; the ticket proves the number was verified
+  const pre = { name: (s && s.name) || (al && al.name) || '', email: (s && s.email) || (al && al.email) || '', company: (s && s.company) || (al && al.company) || '',
+    designation: (s && s.designation) || (al && al.designation) || '' };
+  res.json({ needProfile: true, ticket: sign({ t: 'otp', phone, exp: now() + 20 * 60e3 }), prefill: pre });
 });
 app.post('/api/otp/profile', (req, res) => {
   const tk = verify(req.body.ticket);
   if (!tk || tk.t !== 'otp') return res.status(400).json({ error: 'সময় শেষ হয়ে গেছে। আবার নম্বর দিয়ে শুরু করুন।', restart: true });
   const f = checkProfile(req.body); if (f.error) return res.status(400).json({ error: f.error });
+  if (!isAllowed(tk.phone)) return res.status(403).json({ notAllowed: true, error: loginNotice() });
+  const desig = String(req.body.designation || (allowRow(tk.phone) || {}).designation || '').trim().slice(0, 80) || null;
   let s = findByPhone(tk.phone), via = 'otp';
-  if (s) q('UPDATE students SET name=?, email=?, company=? WHERE id=?').run(f.name, f.email, f.company, s.id);
-  else { s = { id: Number(q('INSERT INTO students(name,email,phone,company,created_at) VALUES(?,?,?,?,?)').run(f.name, f.email, tk.phone, f.company, now()).lastInsertRowid) }; via = 'new'; }
+  if (s) q('UPDATE students SET name=?, email=?, company=?, designation=? WHERE id=?').run(f.name, f.email, f.company, desig, s.id);
+  else { s = { id: Number(q('INSERT INTO students(name,email,phone,company,designation,created_at) VALUES(?,?,?,?,?,?)').run(f.name, f.email, tk.phone, f.company, desig, now()).lastInsertRowid) }; via = 'new'; }
   s = q('SELECT * FROM students WHERE id=?').get(s.id);
   if (s.blocked) return res.status(403).json({ error: 'আপনার অ্যাক্সেস বন্ধ করা হয়েছে।' });
   startStudentSession(req, res, s, via);
 });
+app.get('/api/login-info', (req, res) => res.json({ restricted: allowEnforced(), notice: loginNotice() }));
 app.post('/api/login', (req, res) => res.status(410).json({ error: 'এখন মোবাইল নম্বর ও OTP কোড দিয়ে ঢুকতে হয়। পেজটি রিফ্রেশ করুন।' }));
 app.post('/api/logout', (req, res) => { res.clearCookie('sid'); res.json({ ok: true }); });
 app.get('/api/me', requireStudent, (req, res) => {
@@ -726,6 +750,7 @@ app.post('/api/admin/access', requireAdmin, (req, res) => {
     const chk = checkSignup(req.body);
     if (chk.error) return res.status(400).json({ error: chk.error });
     const { name, email, phone, company } = chk;
+    if (!allowRow(phone)) q("INSERT INTO allowlist(phone,name,company,email,source,added_at) VALUES(?,?,?,?,'admin',?)").run(phone, name, company, email, now());
     const byPhone = findByPhone(phone); // the number is the identity
     if (byPhone) sid = byPhone.id;
     else {
@@ -811,11 +836,79 @@ app.get('/api/admin/leaderboard', requireAdmin, (req, res) => {
   const video = Number(req.query.video) || 0;
   res.json({ rows: leaderboard({ company: String(req.query.company || ''), video }), companies: companyBoard(video), ptsFinish: PTS_FINISH });
 });
+// ---------- Officer allowlist (admin) ----------
+const fixPhone = (x) => { let d = bnDigits(x).replace(/\D/g, ''); if (d.startsWith('880')) d = d.slice(2); if (/^1[3-9]\d{8}$/.test(d)) d = '0' + d; return /^01[3-9]\d{8}$/.test(d) ? d : null; };
+const fixCompany = (c) => { c = String(c || '').trim().replace(/\s+/g, ' '); return COMPANIES.find(x => x.toLowerCase() === c.toLowerCase()) || c; };
+const goodEmail = (e) => /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)*\.[a-z]{2,}$/i.test(e);
+// Rows pasted from Excel/Sheets: name, company, designation, phone, email, alt phone (tab-separated; commas also work).
+// Repeated phones are merged (a later row fills in or corrects fields; a valid email beats a broken one).
+function parseOfficers(text) {
+  const out = new Map(), bad = []; let rows = 0;
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue; rows++;
+    const c = (line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/)).map(x => x.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim());
+    const phone = fixPhone(c[3]);
+    if (!phone) { if (!/name|নাম/i.test(c[0] || '') || rows > 1) bad.push(line.trim().slice(0, 120)); continue; }
+    const email = String(c[4] || '').replace(/\s+/g, '').toLowerCase();
+    const r = { phone, name: c[0].replace(/\s+/g, ' '), company: fixCompany(c[1]), designation: (c[2] || '').replace(/\s+/g, ' '), email, alt_phone: fixPhone(c[5]) || '' };
+    const old = out.get(phone);
+    if (!old) { out.set(phone, r); continue; }
+    for (const k of ['name', 'company', 'designation', 'alt_phone']) if (r[k]) old[k] = r[k];
+    if (email && (goodEmail(email) || !goodEmail(old.email))) old.email = email;
+    old.dup = (old.dup || 0) + 1;
+  }
+  return { list: [...out.values()], rows, bad };
+}
+app.get('/api/admin/allowlist', requireAdmin, (req, res) => {
+  res.json({
+    enabled: getSetting('allowlist_enabled', '1') === '1', enforced: allowEnforced(), notice: loginNotice(), companies: COMPANIES,
+    rows: q(`SELECT a.*, s.id student_id, s.last_seen FROM allowlist a LEFT JOIN students s ON s.phone=a.phone ORDER BY a.company, a.name`).all(),
+    // people who tried to log in with a number that isn't on the list (to add them on request)
+    rejected: q(`SELECT phone, MAX(at) at, COUNT(*) tries FROM otp_log WHERE error='not_on_list' AND phone NOT IN (SELECT phone FROM allowlist)
+      GROUP BY phone ORDER BY at DESC LIMIT 50`).all(),
+  });
+});
+app.post('/api/admin/allowlist/import', requireAdmin, (req, res) => {
+  const { list, rows, bad } = parseOfficers(req.body.text);
+  if (!list.length) return res.status(400).json({ error: 'কোনো সঠিক নম্বর পাওয়া যায়নি। Excel থেকে কলামগুলো (নাম, কোম্পানি, পদবি, ফোন, ইমেইল, বিকল্প ফোন) কপি করে পেস্ট করুন।', bad });
+  let added = 0, updated = 0;
+  db.exec('BEGIN');
+  try {
+    for (const r of list) {
+      const ex = q('SELECT phone FROM allowlist WHERE phone=?').get(r.phone);
+      if (ex) { q('UPDATE allowlist SET name=?, company=?, designation=?, email=?, alt_phone=? WHERE phone=?').run(r.name, r.company, r.designation, r.email, r.alt_phone, r.phone); updated++; }
+      else { q("INSERT INTO allowlist(phone,name,company,designation,email,alt_phone,source,added_at) VALUES(?,?,?,?,?,?,'import',?)").run(r.phone, r.name, r.company, r.designation, r.email, r.alt_phone, now()); added++; }
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  res.json({ ok: true, rows, unique: list.length, added, updated, merged: rows - list.length - bad.length, bad,
+    unknownCompany: [...new Set(list.map(r => r.company).filter(c => c && !COMPANIES.includes(c)))] });
+});
+app.post('/api/admin/allowlist', requireAdmin, (req, res) => {
+  const phone = fixPhone(req.body.phone);
+  if (!phone) return res.status(400).json({ error: 'সঠিক মোবাইল নম্বর দিন (01XXXXXXXXX)' });
+  const name = String(req.body.name || '').trim().slice(0, 80);
+  if (!name) return res.status(400).json({ error: 'নাম দিন' });
+  const r = { name, company: fixCompany(req.body.company), designation: String(req.body.designation || '').trim().slice(0, 80), email: normEmail(req.body.email), alt_phone: fixPhone(req.body.alt_phone) || '' };
+  q(`INSERT INTO allowlist(phone,name,company,designation,email,alt_phone,source,added_at) VALUES(?,?,?,?,?,?,'admin',?)
+     ON CONFLICT(phone) DO UPDATE SET name=excluded.name, company=excluded.company, designation=excluded.designation, email=excluded.email, alt_phone=excluded.alt_phone`)
+    .run(phone, r.name, r.company, r.designation, r.email, r.alt_phone, now());
+  res.json({ ok: true, phone });
+});
+app.delete('/api/admin/allowlist/:phone', requireAdmin, (req, res) => {
+  q('DELETE FROM allowlist WHERE phone=?').run(String(req.params.phone)); res.json({ ok: true });
+});
+app.post('/api/admin/allowlist/settings', requireAdmin, (req, res) => {
+  if ('enabled' in req.body) setSetting('allowlist_enabled', req.body.enabled ? '1' : '0');
+  if ('notice' in req.body) setSetting('login_notice', String(req.body.notice || '').trim().slice(0, 1000));
+  res.json({ ok: true });
+});
+
 // ---------- SMS / OTP settings (admin) ----------
 app.get('/api/admin/sms', requireAdmin, (req, res) => {
   const c = smsCfg(), k = c.api_key || '';
   res.json({ provider: c.provider, providers: PROVIDERS, sender_id: c.sender_id, custom_url: c.custom_url, message: c.message,
-    api_key_set: !!k, api_key_hint: k ? '••••' + k.slice(-4) : '',
+    api_key_set: !!k, api_key_hint: k ? '••••' + k.slice(-4) : '', login_notice: loginNotice(), allow_enforced: allowEnforced(), allow_count: allowCount(),
     log: q(`SELECT l.phone, l.at, l.ok, l.provider, l.error, l.test_code, s.name FROM otp_log l LEFT JOIN students s ON s.phone=l.phone ORDER BY l.id DESC LIMIT 50`).all() });
 });
 app.post('/api/admin/sms', requireAdmin, (req, res) => {
@@ -824,6 +917,7 @@ app.post('/api/admin/sms', requireAdmin, (req, res) => {
   if (b.api_key) setSetting('sms_api_key', String(b.api_key).trim());   // blank = keep the old key
   if (b.sender_id !== undefined) setSetting('sms_sender_id', String(b.sender_id).trim().slice(0, 30));
   if (b.custom_url !== undefined) setSetting('sms_custom_url', String(b.custom_url).trim().slice(0, 500));
+  if (b.login_notice !== undefined) setSetting('login_notice', String(b.login_notice).trim().slice(0, 1000));
   if (b.message !== undefined) {
     const m = String(b.message).trim().slice(0, 300);
     if (!m.includes('{code}')) return res.status(400).json({ error: 'মেসেজে {code} থাকতে হবে, সেখানেই কোড বসবে' });

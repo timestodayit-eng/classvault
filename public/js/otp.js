@@ -21,14 +21,19 @@
       box.innerHTML = `<form class="otp-f" autocomplete="on">
         <label>মোবাইল নম্বর</label>
         <input class="input" name="phone" type="tel" inputmode="tel" placeholder="01XXXXXXXXX" autocomplete="tel" required value="${esc(prefill)}">
-        <div class="err"></div>
+        <div class="err"></div><div class="otp-notice" style="display:none"></div>
         <button class="btn otp-btn">কোড পাঠান →</button>
         <p class="otp-hint">এই নম্বরে একটি ৬ সংখ্যার কোড SMS এ যাবে। আপনার নম্বরই আপনার প্রোফাইল, সবসময় এই নম্বর দিয়েই ঢুকবেন।</p></form>`;
       q('input').focus();
       q('form').onsubmit = async (e) => {
-        e.preventDefault(); const b = q('.otp-btn'); q('.err').textContent = ''; busy(b, true, 'পাঠানো হচ্ছে…');
+        e.preventDefault(); const b = q('.otp-btn'); q('.err').textContent = ''; q('.otp-notice').style.display = 'none'; busy(b, true, 'পাঠানো হচ্ছে…');
         try { const r = await call('/api/otp/send', { phone: en(q('input').value) }); phone = r.phone; stepCode(r); }
-        catch (er) { q('.err').textContent = er.message; busy(b, false, 'কোড পাঠান →'); }
+        catch (er) {
+          // number not on the officers' list → show the admin's notice prominently
+          if (er.notAllowed) { const n = q('.otp-notice'); n.textContent = '🔒 ' + er.message; n.style.display = 'block'; }
+          else q('.err').textContent = er.message;
+          busy(b, false, 'কোড পাঠান →');
+        }
       };
     }
     function stepCode(r) {
@@ -57,16 +62,17 @@
           const v = await call('/api/otp/verify', { phone, code: inp.value, ...extra });
           clearInterval(timer);
           if (v.needProfile) stepProfile(v); else opts.onDone && opts.onDone(v.student);
-        } catch (er) { q('.err').textContent = er.message; busy(b, false, 'যাচাই করুন'); inp.select(); if (er.expired) inp.value = ''; }
+        } catch (er) { q('.err').textContent = er.message; busy(b, false, 'যাচাই করুন'); inp.select(); if (er.expired) inp.value = ''; if (er.notAllowed) stepPhone(phone); }
       };
     }
     async function stepProfile(v) {
       const p = v.prefill || {};
       const companies = await fetch('/api/companies').then(r => r.json()).catch(() => []);
       box.innerHTML = `<form class="otp-f">
-        <div class="otp-sent">✅ নম্বর যাচাই হয়েছে। প্রথমবার, তাই একবার আপনার তথ্য দিন।</div>
+        <div class="otp-sent">✅ নম্বর যাচাই হয়েছে। প্রথমবার, তাই একবার আপনার তথ্য দেখে নিন${p.name ? ' (তালিকা থেকে বসানো আছে, ভুল থাকলে ঠিক করুন)' : ''}।</div>
         <label>আপনার নাম</label><input class="input" name="name" placeholder="যেমন: রাফি আহমেদ" autocomplete="name" required value="${esc(p.name)}">
         <label>ইমেইল</label><input class="input" name="email" type="email" placeholder="you@example.com" autocomplete="email" required value="${esc(p.email)}">
+        <label>পদবি</label><input class="input" name="designation" placeholder="যেমন: Executive Officer" value="${esc(p.designation)}">
         <label>আপনি কোন কোম্পানির?</label><select class="input" name="company" required><option value="">কোম্পানি বেছে নিন</option>
           ${companies.map(c => `<option ${c === p.company ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
         <div class="err"></div><button class="btn otp-btn">শুরু করুন →</button></form>`;

@@ -132,7 +132,8 @@ function shell() {
         <a href="#/videos" data-r="videos">🎬 ক্লাস ও ভিডিও</a>
         <a href="#/students" data-r="students">👥 স্টুডেন্ট</a>
         <a href="#/leaderboard" data-r="leaderboard">🏆 লিডারবোর্ড</a>
-        <a href="#/settings" data-r="settings">⚙️ সেটিংস (SMS)</a>
+        <a href="#/allow" data-r="allow">👮 লগইন তালিকা</a>
+        <a href="#/settings" data-r="settings">⚙️ সেটিংস</a>
       </nav>
       <div class="foot" style="margin-top:auto;display:grid;gap:8px">
         <a class="btn ghost sm" href="/api/admin/students.csv" style="justify-content:center">⬇ স্টুডেন্ট তালিকা (CSV)</a>
@@ -155,6 +156,7 @@ async function route() {
     if (r === 'videos') await viewVideos(main);
     else if (r === 'students') await viewStudents(main, id);
     else if (r === 'settings') await viewSettings(main);
+    else if (r === 'allow') await viewAllow(main);
     else if (r === 'leaderboard') await viewLeaderboard(main, id || 'overall');
     else if (r === 'student') await viewStudent(main, id);
     else if (r === 'video') await viewVideoReport(main, id);
@@ -326,18 +328,84 @@ async function viewLeaderboard(main, tab = 'overall') {
 window.lbVideo = (id) => { lbFilter.video = String(id); location.hash = '#/leaderboard/video'; route(); };
 window.lbCompany = (c) => { lbFilter.company = c; lbFilter.video = ''; location.hash = '#/leaderboard/overall'; route(); };
 
+// ---------------- officer allowlist ----------------
+async function viewAllow(main) {
+  const d = await api('/api/admin/allowlist');
+  main.innerHTML = `<div class="head"><h1>👮 লগইন তালিকা <span class="pill" id="acnt">${bn(d.rows.length)}টি নম্বর</span></h1>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="addOne">＋ একজন যোগ করুন</button><button class="btn ghost" id="imp">📋 Excel থেকে পেস্ট করে ইমপোর্ট</button></div></div>
+  <div class="card" style="padding:14px 18px;margin-bottom:16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;${d.enforced ? 'background:#ecfdf5;border-color:#a7f3d0' : 'background:#fef3c7;border-color:#fcd34d'}">
+    <div style="flex:1;min-width:260px">${d.enforced ? '✅ <b>চালু:</b> শুধু এই তালিকার নম্বরে OTP যাবে ও লগইন করা যাবে। তালিকা থেকে কাউকে বাদ দিলে সে সাথে সাথে বের হয়ে যাবে।'
+      : d.enabled ? '⚠️ তালিকা খালি, তাই এখন যেকোনো নম্বর ঢুকতে পারে। ইমপোর্ট করলেই নিয়ম চালু হবে।' : '⚠️ <b>বন্ধ:</b> এখন যেকোনো নম্বর দিয়ে লগইন করা যায়।'}</div>
+    <label style="display:flex;gap:8px;align-items:center;font-weight:600;cursor:pointer"><input type="checkbox" id="aen" ${d.enabled ? 'checked' : ''}> শুধু তালিকার নম্বর ঢুকতে পারবে</label></div>
+  ${d.rejected.length ? `<div class="card panel" style="margin-bottom:18px"><h3>🚫 তালিকার বাইরে থেকে যারা ঢুকতে চেয়েছিল <span class="muted" style="font-size:12.5px;font-weight:400">অনুরোধ এলে "যোগ করুন" চাপুন</span></h3><table>
+    <tr><th>নম্বর</th><th>শেষ চেষ্টা</th><th>কতবার</th><th></th></tr>
+    ${d.rejected.map(r => `<tr><td><b>${esc(r.phone)}</b></td><td class="muted">${ago(r.at)}</td><td>${bn(r.tries)}</td><td><button class="btn sm" onclick="allowAdd('${esc(r.phone)}')">＋ যোগ করুন</button></td></tr>`).join('')}</table></div>` : ''}
+  <div class="card panel"><h3><span>অনুমোদিত নম্বর</span><span style="display:flex;gap:8px">${companySelect('acf')}<input class="input search" id="aq" placeholder="নাম, নম্বর বা ইমেইল"></span></h3><div class="scroll"><table id="atbl"></table></div></div>`;
+  let cf = '';
+  const draw = () => {
+    const f = ($('#aq').value || '').toLowerCase();
+    const rows = d.rows.filter(byCo(cf)).filter(r => (r.name + r.phone + r.email + r.designation + r.alt_phone).toLowerCase().includes(f));
+    $('#acnt').textContent = bn(rows.length) + 'টি নম্বর';
+    $('#atbl').innerHTML = `<tr><th>নাম</th><th>মোবাইল (লগইন)</th><th>কোম্পানি</th><th>পদবি</th><th>ইমেইল</th><th>লগইন করেছে?</th><th></th></tr>` +
+      (rows.map(r => `<tr><td><b>${esc(r.name)}</b>${r.source === 'admin' ? ' <span class="pill" title="হাতে যোগ করা">হাতে</span>' : ''}</td><td style="white-space:nowrap">${esc(r.phone)}${r.alt_phone && r.alt_phone !== r.phone ? `<div class="muted" style="font-size:12px" title="বিকল্প ফোন (শুধু তথ্য)">বিকল্প: ${esc(r.alt_phone)}</div>` : ''}</td><td>${co(r.company)}</td><td>${esc(r.designation)}</td>
+        <td style="font-size:13px">${esc(r.email)}${r.email && !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)*\.[a-z]{2,}$/i.test(r.email) ? ' <span class="pill warn" title="প্রথম লগইনে নিজে ঠিক করে নেবে">ভুল?</span>' : ''}</td>
+        <td>${r.student_id ? `<a href="#/student/${r.student_id}">✅ হ্যাঁ</a><div class="muted" style="font-size:12px">${ago(r.last_seen)}</div>` : '<span class="muted">এখনো না</span>'}</td>
+        <td style="white-space:nowrap"><button class="btn ghost sm" onclick="allowEdit('${esc(r.phone)}')">এডিট</button> <button class="btn danger sm" onclick="allowDel('${esc(r.phone)}')">বাদ দিন</button></td></tr>`).join('')
+      || '<tr><td colspan=7 class="muted">তালিকা খালি। উপরের "Excel থেকে পেস্ট করে ইমপোর্ট" দিয়ে অফিসারদের তালিকা যোগ করুন।</td></tr>');
+  };
+  draw(); $('#aq').oninput = draw; $('#acf').onchange = (e) => { cf = e.target.value; draw(); };
+  $('#aen').onchange = async (e) => { await post('/api/admin/allowlist/settings', { enabled: e.target.checked }); toast(e.target.checked ? 'চালু হয়েছে' : 'বন্ধ হয়েছে'); route(); };
+  window.allowRows = d.rows;
+  $('#addOne').onclick = () => allowForm({});
+  $('#imp').onclick = () => {
+    const m = modal(`<h2>📋 অফিসারদের তালিকা ইমপোর্ট</h2>
+      <div class="muted" style="font-size:13px">Excel বা Google Sheet থেকে এই ক্রমে কলামগুলো সিলেক্ট করে কপি করুন, তারপর নিচে পেস্ট করুন:<br><b>নাম · কোম্পানি · পদবি · মোবাইল · ইমেইল · বিকল্প ফোন</b><br>
+      একই নম্বর একাধিকবার থাকলে একটাই রাখা হবে। আগে থেকে থাকা নম্বরের তথ্য আপডেট হবে, কাউকে বাদ দেওয়া হবে না।</div>
+      <textarea class="input" id="impT" rows="12" style="font-family:monospace;font-size:12px;margin-top:10px;white-space:pre" placeholder="Rayhan	Coastal Manpower	Executive Officer	01805992626	name@gmail.com	01865428516"></textarea>
+      <div class="err" id="impE"></div><div id="impR"></div><button class="btn" id="impB">ইমপোর্ট করুন</button>`, true);
+    $('#impB', m).onclick = async () => {
+      $('#impE', m).textContent = ''; $('#impB', m).disabled = true;
+      try {
+        const r = await post('/api/admin/allowlist/import', { text: $('#impT', m).value });
+        $('#impR', m).innerHTML = `<div class="card" style="padding:12px 14px;margin:10px 0;background:#ecfdf5">✅ ${bn(r.rows)}টি লাইন থেকে ${bn(r.unique)} জন: নতুন ${bn(r.added)}, আপডেট ${bn(r.updated)}${r.merged ? `, ডুপ্লিকেট একত্র ${bn(r.merged)}` : ''}।
+          ${r.bad.length ? `<div style="color:var(--bad);margin-top:6px">⚠️ ${bn(r.bad.length)}টি লাইনে সঠিক মোবাইল নম্বর নেই, বাদ গেছে:<br><small>${r.bad.map(esc).join('<br>')}</small></div>` : ''}
+          ${r.unknownCompany.length ? `<div class="muted" style="margin-top:6px">অজানা কোম্পানি: ${r.unknownCompany.map(esc).join(', ')}</div>` : ''}</div>`;
+        $('#impB', m).textContent = 'বন্ধ করুন'; $('#impB', m).disabled = false; $('#impB', m).onclick = () => { m.remove(); route(); };
+      } catch (er) { $('#impE', m).textContent = er.message; $('#impB', m).disabled = false; }
+    };
+  };
+}
+function allowForm(r) {
+  const m = modal(`<h2>${r.phone ? 'তথ্য এডিট' : '＋ লগইন তালিকায় যোগ করুন'}</h2><form id="alf">
+    <label>মোবাইল নম্বর (এটা দিয়েই লগইন করবে)</label><input class="input" name="phone" value="${esc(r.phone)}" ${r.phone && r.name ? 'readonly' : ''} required placeholder="01XXXXXXXXX">
+    <label>নাম</label><input class="input" name="name" value="${esc(r.name)}" required>
+    <label>কোম্পানি</label><select class="input" name="company"><option value="">—</option>${COMPANIES.map(c => `<option ${c === r.company ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+    <label>পদবি</label><input class="input" name="designation" value="${esc(r.designation)}">
+    <label>ইমেইল</label><input class="input" name="email" value="${esc(r.email)}">
+    <label>বিকল্প ফোন</label><input class="input" name="alt_phone" value="${esc(r.alt_phone)}">
+    <div class="err" id="alE"></div><button class="btn">সেভ করুন</button></form>`);
+  $('#alf', m).onsubmit = async (e) => { e.preventDefault();
+    try { await post('/api/admin/allowlist', Object.fromEntries(new FormData(e.target))); m.remove(); toast('সেভ হয়েছে, এখন এই নম্বর দিয়ে লগইন করা যাবে'); route(); }
+    catch (er) { $('#alE', m).textContent = er.message; } };
+}
+window.allowAdd = (phone) => allowForm({ phone });
+window.allowEdit = (phone) => allowForm((window.allowRows || []).find(r => r.phone === phone) || { phone });
+window.allowDel = (phone) => confirmBox(`${phone} নম্বরটি তালিকা থেকে বাদ দিলে সে আর লগইন করতে পারবে না (তার দেখার ডাটা থেকে যাবে)।`, async () => { await api('/api/admin/allowlist/' + encodeURIComponent(phone), { method: 'DELETE' }); route(); }, 'হ্যাঁ, বাদ দিন');
+
 // ---------------- settings: SMS gateway for OTP ----------------
 async function viewSettings(main) {
   const d = await api('/api/admin/sms');
   const names = { test: '🧪 টেস্ট মোড (SMS যাবে না, কোড নিচে দেখাবে)', bulksmsbd: 'BulkSMSBD (bulksmsbd.net)', alpha: 'Alpha SMS (sms.net.bd)', custom: 'অন্য কোম্পানি (কাস্টম লিংক)' };
   main.innerHTML = `<div class="head"><h1>⚙️ সেটিংস</h1></div>
   ${d.provider === 'test' ? '<div class="card" style="padding:14px 18px;margin-bottom:16px;background:#fef3c7;border-color:#fcd34d;color:#92400e"><b>এখন টেস্ট মোড চালু।</b> স্টুডেন্টদের ফোনে SMS যাচ্ছে না, কোড শুধু নিচের তালিকায় দেখা যাচ্ছে। আসল ব্যবহারের আগে BulkSMSBD বেছে API key দিন।</div>' : ''}
-  <div class="cols"><div class="card panel"><h3>📱 OTP SMS সেটিংস</h3><form id="smsF" style="padding:6px 18px 18px">
+  <div class="cols"><div class="card panel"><h3>📱 লগইন ও SMS সেটিংস</h3><form id="smsF" style="padding:6px 18px 18px">
     <label>SMS কোম্পানি</label><select class="input" name="provider">${d.providers.map(p => `<option value="${p}" ${p === d.provider ? 'selected' : ''}>${names[p] || p}</option>`).join('')}</select>
     <div class="pv pv-bulksmsbd pv-alpha pv-custom"><label>API Key ${d.api_key_set ? `<span class="muted" style="font-weight:400">(সেভ করা আছে ${esc(d.api_key_hint)}, বদলাতে চাইলে নতুনটা লিখুন)</span>` : ''}</label>
       <input class="input" name="api_key" autocomplete="off" placeholder="${d.api_key_set ? 'খালি রাখলে আগেরটাই থাকবে' : 'আপনার API key'}"></div>
     <div class="pv pv-bulksmsbd pv-alpha"><label>Sender ID <span class="muted" style="font-weight:400">(BulkSMSBD প্যানেলে যে Sender ID দেখায়)</span></label><input class="input" name="sender_id" value="${esc(d.sender_id)}" placeholder="যেমন: 8809617xxxxxx"></div>
     <div class="pv pv-custom"><label>লিংক <span class="muted" style="font-weight:400">({to} = নম্বর, {msg} = মেসেজ, {key} = API key)</span></label><input class="input" name="custom_url" value="${esc(d.custom_url)}" placeholder="https://.../send?key={key}&to={to}&text={msg}"></div>
+    <label>তালিকার বাইরের নম্বরে যে নোটিস দেখাবে</label><textarea class="input" name="login_notice" rows="3">${esc(d.login_notice)}</textarea>
+    <div class="muted" style="font-size:12px;margin-top:4px">${d.allow_enforced ? `👮 এখন শুধু লগইন তালিকার ${bn(d.allow_count)}টি নম্বর ঢুকতে পারে।` : '⚠️ লগইন তালিকা এখন বন্ধ বা খালি, তাই যেকোনো নম্বর ঢুকতে পারে।'} <a href="#/allow">তালিকা দেখুন →</a></div>
     <label>SMS এর লেখা <span class="muted" style="font-weight:400">({code} এর জায়গায় কোড বসবে। ইংরেজিতে লিখলে খরচ কম)</span></label><textarea class="input" name="message" rows="2">${esc(d.message)}</textarea>
     <div class="err" id="smsErr"></div><button class="btn">সেভ করুন</button></form></div>
     <div class="card panel"><h3>✉️ টেস্ট SMS পাঠান</h3><form id="testF" style="padding:6px 18px 18px;display:grid;gap:8px">

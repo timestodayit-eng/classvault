@@ -61,3 +61,6 @@ tr.click{cursor:pointer}tr.click:hover td{background:#fafbff}
 .otp-hint{font-size:12.5px;opacity:.75;margin:12px 0 0}
 .otp-sent{font-size:14px;margin-bottom:4px;line-height:1.5}.otp-sent a{margin-left:6px}
 .otp-test{margin-top:8px;font-size:12.5px;background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 10px}
+.otp-notice{margin:10px 0 4px;padding:12px 14px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:14px;line-height:1.6;font-weight:600}
+
+.scroll{overflow-x:auto}
