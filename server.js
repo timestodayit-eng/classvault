@@ -592,7 +592,10 @@ app.get('/api/admin/videos', requireAdmin, (req, res) => {
   const rows = q(`SELECT v.*, c.name class_name, COUNT(p.student_id) viewers, COALESCE(AVG(p.percent),0) avg_percent,
       COALESCE(SUM(p.completed),0) completed, COALESCE(SUM(p.watch_time),0) watch_time,
       (SELECT COUNT(*) FROM sessions se WHERE se.video_id=v.id AND se.watch_time>=5) views,
-      (SELECT COUNT(*) FROM access a WHERE a.video_id=v.id) access_count
+      (SELECT COUNT(*) FROM access a WHERE a.video_id=v.id) access_count,
+      (SELECT COUNT(*) FROM quiz_items i WHERE i.video_id=v.id) quiz_count,
+      (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.video_id=v.id) quiz_attempts,
+      (SELECT COUNT(*) FROM questions qq WHERE qq.video_id=v.id AND qq.answer IS NULL AND qq.hidden=0) open_questions
       FROM videos v JOIN classes c ON c.id=v.class_id LEFT JOIN progress p ON p.video_id=v.id
       GROUP BY v.id ORDER BY c.sort, v.id`).all();
   res.json(rows.map(r => ({ ...r, job: jobs.get(r.id) ?? null })));
@@ -904,6 +907,248 @@ app.post('/api/admin/allowlist/settings', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Site customisation (admin ⚙️ সেটিংস) ----------
+// Everything that's branding or fixed text lives in the settings table, so the admin can change it without touching code.
+const BRAND_DEFAULTS = {
+  site_name: 'ক্লাসভল্ট', logo_text: '▶', color: '#4f46e5', theme: 'light',
+  hero_title: 'তোমার ক্লাসের সব ভিডিও,\nএক জায়গায়।',
+  hero_text: 'কোনো পাসওয়ার্ড লাগবে না। মোবাইল নম্বর দাও, SMS এ আসা কোড দিয়ে ঢুকে যাও।',
+  features: '📚 ক্লাস অনুযায়ী সাজানো ভিডিও\n⏯️ যেখানে থেমেছিলে, সেখান থেকেই আবার শুরু\n✅ কোন ভিডিও কতটুকু দেখেছ, সব হিসাব',
+  login_title: 'ভিডিও দেখতে ঢুকুন',
+  login_sub: 'মোবাইল নম্বর দিয়ে লগইন। প্রথমবার হলে প্রোফাইল নিজে থেকেই তৈরি হবে।',
+  catalog_title: 'আমার ক্লাসগুলো',
+  footer: '',
+  noshare: '🚫 এই ভিডিও কারো সাথে শেয়ার করা যাবে না',
+  watch_note: '🔒 এই ভিডিওটি সুরক্ষিত। ভিডিওর উপর আপনার নাম ও ফোন নম্বর দেখানো হচ্ছে। ভিডিও রেকর্ড বা শেয়ার করলে তা আপনার নামেই চিহ্নিত হবে। অন্য ট্যাব বা উইন্ডোতে গেলে ভিডিও থেমে যাবে।',
+  qa_enabled: '1', quiz_enabled: '1', quiz_need_finish: '1',
+};
+const BRAND_MAX = { site_name: 60, logo_text: 4, hero_title: 200, hero_text: 400, features: 600, login_title: 100, login_sub: 300, catalog_title: 100, footer: 200, noshare: 200, watch_note: 600 };
+const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function brand() {
+  const b = {};
+  for (const k of Object.keys(BRAND_DEFAULTS)) { const v = getSetting('brand_' + k, null); b[k] = v === null ? BRAND_DEFAULTS[k] : v; }
+  if (!/^#[0-9a-f]{6}$/i.test(b.color)) b.color = BRAND_DEFAULTS.color;
+  if (!['light', 'dark'].includes(b.theme)) b.theme = 'light';
+  if (!b.site_name) b.site_name = BRAND_DEFAULTS.site_name;
+  b.footer_raw = b.footer; b.footer = b.footer || '© ' + b.site_name;
+  b.ver = getSetting('brand_ver', '1');
+  b.has_logo = !!getSetting('brand_logo_img'); b.has_favicon = !!getSetting('brand_favicon');
+  b.logo_html = `<b>${b.has_logo ? `<img src="/brand/logo?v=${b.ver}" alt="">` : escHtml(b.logo_text || '▶')}</b> <span class="sitename">${escHtml(b.site_name)}</span>`;
+  return b;
+}
+function brandCss(hex) {
+  const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, bl = n & 255;
+  const mix = (t, w) => '#' + [r, g, bl].map(c => Math.round(c + (t - c) * w).toString(16).padStart(2, '0')).join('');
+  return `:root{--brand:${hex};--brand2:${mix(255, .15)};--brand-soft:${mix(255, .88)};--brand-deep:${mix(0, .35)}}html[data-theme=dark]{--brand-soft:rgba(${r},${g},${bl},.2);--brand-text:${mix(255, .4)}}`;
+}
+const THEME_JS = `(function(){var d=document.documentElement,s=null;try{s=localStorage.getItem('cv-theme')}catch(e){}
+d.setAttribute('data-theme',s||d.getAttribute('data-default-theme')||BRAND.theme);
+var ic=function(){return d.getAttribute('data-theme')==='dark'?'☀️':'🌙'};
+window.toggleTheme=function(){var t=d.getAttribute('data-theme')==='dark'?'light':'dark';d.setAttribute('data-theme',t);try{localStorage.setItem('cv-theme',t)}catch(e){}
+document.querySelectorAll('.themebtn').forEach(function(b){b.textContent=ic()})};
+window.themeBtn=function(c){return '<button class="themebtn '+(c||'')+'" type="button" onclick="toggleTheme()" title="দিন / রাত মোড">'+ic()+'</button>'};})();`;
+const pageCache = {};
+function sendPage(res, file) {
+  const html = pageCache[file] || (pageCache[file] = fs.readFileSync(path.join(__dirname, 'public', file), 'utf8'));
+  const b = brand();
+  const head = `<link rel="icon" href="/brand/favicon?v=${b.ver}"><meta name="theme-color" content="${b.color}"><style>${brandCss(b.color)}</style>` +
+    `<script>window.BRAND=${JSON.stringify(b).replace(/</g, '\\u003c')};${THEME_JS}</script>`;
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(html.replace('</head>', head + '</head>').replace(/\{\{(\w+)\}\}/g, (_, k) => k.endsWith('_html') ? (b[k] || '') : escHtml(b[k])));
+}
+app.get(['/', '/index.html'], (req, res) => sendPage(res, 'index.html'));
+app.get(['/watch', '/watch.html', '/v/:token'], (req, res) => sendPage(res, 'watch.html'));
+app.get(['/admin', '/admin.html'], (req, res) => sendPage(res, 'admin.html'));
+app.get('/api/brand', (req, res) => res.json(brand()));
+function sendDataUrl(res, du) {
+  const m = /^data:(image\/(?:png|jpeg|gif|webp|svg\+xml|x-icon|vnd\.microsoft\.icon));base64,(.+)$/.exec(du || '');
+  if (!m) return false;
+  res.set({ 'Content-Type': m[1], 'Cache-Control': 'public, max-age=86400', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" });
+  res.send(Buffer.from(m[2], 'base64')); return true;
+}
+app.get('/brand/logo', (req, res) => { if (!sendDataUrl(res, getSetting('brand_logo_img'))) res.status(404).end(); });
+app.get(['/brand/favicon', '/favicon.ico'], (req, res) => {
+  if (sendDataUrl(res, getSetting('brand_favicon') || getSetting('brand_logo_img'))) return;
+  const b = brand(); // no image uploaded → draw the logo text on the brand colour
+  res.set({ 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' });
+  res.send(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="${b.color}"/><text x="32" y="44" font-size="32" text-anchor="middle" fill="#fff" font-family="sans-serif">${escHtml(b.logo_text || '▶')}</text></svg>`);
+});
+app.get('/api/admin/brand', requireAdmin, (req, res) => res.json({ ...brand(), defaults: BRAND_DEFAULTS }));
+app.post('/api/admin/brand', requireAdmin, express.json({ limit: '2mb' }), (req, res) => {
+  const b = req.body || {};
+  for (const k of Object.keys(BRAND_DEFAULTS)) {
+    if (b[k] === undefined) continue;
+    let v = String(b[k]).replace(/\r/g, '').trim();
+    if (k === 'color' && !/^#[0-9a-f]{6}$/i.test(v)) return res.status(400).json({ error: 'রং সঠিক নয়' });
+    if (k === 'theme' && !['light', 'dark'].includes(v)) v = 'light';
+    if (/_enabled$|_need_finish$/.test(k)) v = v === '1' || v === 'true' || v === 'on' ? '1' : '0';
+    if (BRAND_MAX[k]) v = v.slice(0, BRAND_MAX[k]);
+    setSetting('brand_' + k, v);
+  }
+  for (const [k, key] of [['logo_img', 'brand_logo_img'], ['favicon', 'brand_favicon']]) {
+    if (b[k] === undefined) continue;
+    const v = String(b[k] || '');
+    if (v && !/^data:image\/(png|jpeg|gif|webp|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/=]+$/.test(v)) return res.status(400).json({ error: 'ছবিটি PNG, JPG, SVG, WEBP বা ICO হতে হবে' });
+    if (v.length > 700000) return res.status(400).json({ error: 'ছবিটি ৫০০ KB এর চেয়ে ছোট দিন' });
+    setSetting(key, v);
+  }
+  if (b.reset) for (const k of Object.keys(BRAND_DEFAULTS)) db.prepare('DELETE FROM settings WHERE k=?').run('brand_' + k);
+  setSetting('brand_ver', String(Date.now()));
+  res.json({ ok: true });
+});
+const flag = (k) => brand()[k] === '1';
+
+// ---------- Questions under each video ----------
+db.exec(`CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE, body TEXT NOT NULL, created_at INTEGER,
+  answer TEXT, answered_at INTEGER, hidden INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS questions_video ON questions(video_id);
+CREATE TABLE IF NOT EXISTS quiz_items(id INTEGER PRIMARY KEY, video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  q TEXT NOT NULL, options TEXT NOT NULL, correct INTEGER NOT NULL, sort INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS quiz_attempts(id INTEGER PRIMARY KEY, video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE, score INTEGER, total INTEGER, time_ms INTEGER, answers TEXT, at INTEGER,
+  UNIQUE(video_id, student_id));`);
+function videoForStudent(req, res) {
+  const id = Number(req.params.id);
+  if (!q("SELECT 1 FROM videos WHERE id=? AND status='ready'").get(id) || !hasAccess(req.student.id, id)) { res.status(403).json({ error: 'এই ভিডিও দেখার অনুমতি নেই' }); return 0; }
+  return id;
+}
+app.get('/api/videos/:id/questions', requireStudent, (req, res) => {
+  const id = videoForStudent(req, res); if (!id) return;
+  if (!flag('qa_enabled')) return res.json({ enabled: false, items: [] });
+  // your own questions (answered or not) + other people's answered questions
+  const items = q(`SELECT qu.id, qu.body, qu.created_at, qu.answer, qu.answered_at, qu.student_id=? mine, s.name, s.company
+      FROM questions qu JOIN students s ON s.id=qu.student_id
+      WHERE qu.video_id=? AND qu.hidden=0 AND (qu.student_id=? OR qu.answer IS NOT NULL) ORDER BY qu.id DESC LIMIT 200`).all(req.student.id, id, req.student.id);
+  res.json({ enabled: true, items });
+});
+app.post('/api/videos/:id/questions', requireStudent, (req, res) => {
+  const id = videoForStudent(req, res); if (!id) return;
+  if (!flag('qa_enabled')) return res.status(403).json({ error: 'প্রশ্ন করা এখন বন্ধ আছে' });
+  const body = String(req.body.body || '').replace(/\r/g, '').trim();
+  if (body.length < 3) return res.status(400).json({ error: 'প্রশ্নটা একটু লিখে দিন' });
+  if (body.length > 1000) return res.status(400).json({ error: 'প্রশ্ন ১০০০ অক্ষরের মধ্যে লিখুন' });
+  const recent = q('SELECT COUNT(*) c FROM questions WHERE student_id=? AND created_at>?').get(req.student.id, now() - 3600e3).c;
+  if (recent >= 10) return res.status(429).json({ error: 'এক ঘণ্টায় ১০টির বেশি প্রশ্ন করা যাবে না। একটু পরে চেষ্টা করুন।' });
+  q('INSERT INTO questions(video_id,student_id,body,created_at) VALUES(?,?,?,?)').run(id, req.student.id, body, now());
+  res.json({ ok: true });
+});
+app.get('/api/admin/questions', requireAdmin, (req, res) => {
+  const f = String(req.query.filter || 'open'), video = Number(req.query.video) || 0;
+  const where = [f === 'open' ? 'qu.answer IS NULL AND qu.hidden=0' : f === 'answered' ? 'qu.answer IS NOT NULL' : f === 'hidden' ? 'qu.hidden=1' : '1=1'];
+  const args = []; if (video) { where.push('qu.video_id=?'); args.push(video); }
+  const items = q(`SELECT qu.*, s.name, s.phone, s.company, v.title video_title FROM questions qu JOIN students s ON s.id=qu.student_id JOIN videos v ON v.id=qu.video_id
+      WHERE ${where.join(' AND ')} ORDER BY qu.id DESC LIMIT 500`).all(...args);
+  res.json({ items, open: openQuestions() });
+});
+const openQuestions = () => q('SELECT COUNT(*) c FROM questions WHERE answer IS NULL AND hidden=0').get().c;
+app.get('/api/admin/questions/count', requireAdmin, (req, res) => res.json({ open: openQuestions() }));
+app.post('/api/admin/questions/:id', requireAdmin, (req, res) => {
+  const row = q('SELECT * FROM questions WHERE id=?').get(req.params.id); if (!row) return res.status(404).json({ error: 'প্রশ্নটি পাওয়া যায়নি' });
+  if (req.body.answer !== undefined) {
+    const a = String(req.body.answer || '').replace(/\r/g, '').trim().slice(0, 3000);
+    q('UPDATE questions SET answer=?, answered_at=? WHERE id=?').run(a || null, a ? now() : null, row.id);
+  }
+  if (req.body.hidden !== undefined) q('UPDATE questions SET hidden=? WHERE id=?').run(req.body.hidden ? 1 : 0, row.id);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/questions/:id', requireAdmin, (req, res) => { q('DELETE FROM questions WHERE id=?').run(req.params.id); res.json({ ok: true }); });
+
+// ---------- Quiz after each video ----------
+// Correct answers never leave the server before the student submits. One attempt per student per video counts
+// (admin can reset it). Ties on the board are broken by who finished faster.
+const quizStarts = new Map(); // `${student}:${video}` -> ms when the questions were shown
+const quizItems = (video) => q('SELECT * FROM quiz_items WHERE video_id=? ORDER BY sort, id').all(video).map(r => ({ ...r, options: JSON.parse(r.options) }));
+app.get('/api/videos/:id/quiz', requireStudent, (req, res) => {
+  const id = videoForStudent(req, res); if (!id) return;
+  const items = flag('quiz_enabled') ? quizItems(id) : [];
+  if (!items.length) return res.json({ count: 0 });
+  const at = q('SELECT score,total,time_ms,answers,at FROM quiz_attempts WHERE video_id=? AND student_id=?').get(id, req.student.id);
+  if (at) return res.json({ count: items.length, done: true, score: at.score, total: at.total, time_ms: at.time_ms, review: JSON.parse(at.answers || '[]') });
+  const p = q('SELECT completed, percent FROM progress WHERE video_id=? AND student_id=?').get(id, req.student.id);
+  if (flag('quiz_need_finish') && !(p && p.completed)) return res.json({ count: items.length, locked: true, percent: p ? p.percent : 0 });
+  const key = req.student.id + ':' + id; if (!quizStarts.has(key)) quizStarts.set(key, now());
+  res.json({ count: items.length, items: items.map(i => ({ id: i.id, q: i.q, options: i.options })) });
+});
+app.post('/api/videos/:id/quiz', requireStudent, (req, res) => {
+  const id = videoForStudent(req, res); if (!id) return;
+  const items = flag('quiz_enabled') ? quizItems(id) : [];
+  if (!items.length) return res.status(404).json({ error: 'এই ভিডিওর কোনো কুইজ নেই' });
+  if (q('SELECT 1 FROM quiz_attempts WHERE video_id=? AND student_id=?').get(id, req.student.id)) return res.status(409).json({ error: 'আপনি এই কুইজ আগেই দিয়েছেন' });
+  const p = q('SELECT completed FROM progress WHERE video_id=? AND student_id=?').get(id, req.student.id);
+  if (flag('quiz_need_finish') && !(p && p.completed)) return res.status(403).json({ error: 'আগে ভিডিওটি শেষ করুন, তারপর কুইজ দিন' });
+  const ans = req.body.answers || {};
+  const review = items.map(i => { const pick = Number.isInteger(ans[i.id]) ? ans[i.id] : (ans[i.id] != null && ans[i.id] !== '' ? Number(ans[i.id]) : null);
+    return { q: i.q, options: i.options, correct: i.correct, pick, ok: pick === i.correct }; });
+  if (review.some(r => r.pick === null || Number.isNaN(r.pick))) return res.status(400).json({ error: 'সব প্রশ্নের উত্তর দিন' });
+  const key = req.student.id + ':' + id, started = quizStarts.get(key) || now(); quizStarts.delete(key);
+  const score = review.filter(r => r.ok).length, time_ms = Math.max(0, now() - started);
+  q('INSERT INTO quiz_attempts(video_id,student_id,score,total,time_ms,answers,at) VALUES(?,?,?,?,?,?,?)').run(id, req.student.id, score, items.length, time_ms, JSON.stringify(review), now());
+  res.json({ done: true, score, total: items.length, time_ms, review });
+});
+app.get('/api/admin/videos/:id/quiz', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  res.json({ items: quizItems(id), attempts: q('SELECT COUNT(*) c FROM quiz_attempts WHERE video_id=?').get(id).c });
+});
+app.put('/api/admin/videos/:id/quiz', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!q('SELECT 1 FROM videos WHERE id=?').get(id)) return res.status(404).json({ error: 'ভিডিও পাওয়া যায়নি' });
+  const items = Array.isArray(req.body.items) ? req.body.items : [];
+  if (items.length > 50) return res.status(400).json({ error: 'একটি কুইজে সর্বোচ্চ ৫০টি প্রশ্ন' });
+  const clean = [];
+  for (const [n, it] of items.entries()) {
+    const qq = String(it.q || '').trim().slice(0, 500), opts = (Array.isArray(it.options) ? it.options : []).map(o => String(o || '').trim().slice(0, 300)).filter(Boolean);
+    if (!qq) return res.status(400).json({ error: `${n + 1} নম্বর প্রশ্নটি খালি` });
+    if (opts.length < 2 || opts.length > 6) return res.status(400).json({ error: `${n + 1} নম্বর প্রশ্নে ২ থেকে ৬টি অপশন দিন` });
+    const c = Number(it.correct);
+    if (!Number.isInteger(c) || c < 0 || c >= opts.length) return res.status(400).json({ error: `${n + 1} নম্বর প্রশ্নের সঠিক উত্তর বেছে দিন` });
+    clean.push({ q: qq, options: opts, correct: c });
+  }
+  db.exec('BEGIN');
+  try {
+    q('DELETE FROM quiz_items WHERE video_id=?').run(id);
+    clean.forEach((it, i) => q('INSERT INTO quiz_items(video_id,q,options,correct,sort) VALUES(?,?,?,?,?)').run(id, it.q, JSON.stringify(it.options), it.correct, i));
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  res.json({ ok: true, count: clean.length });
+});
+app.delete('/api/admin/videos/:id/quiz/attempts/:sid', requireAdmin, (req, res) => {
+  q('DELETE FROM quiz_attempts WHERE video_id=? AND student_id=?').run(Number(req.params.id), Number(req.params.sid)); res.json({ ok: true });
+});
+// Quiz leaderboard (admin only): ranked by correct answers, then accuracy, then speed.
+function quizBoard({ company = '', video = 0 } = {}) {
+  const where = ['s.blocked=0'], args = [];
+  if (video) { where.push('a.video_id=?'); args.push(video); }
+  if (company === '__none') where.push('s.company IS NULL'); else if (company) { where.push('s.company=?'); args.push(company); }
+  const rows = q(`SELECT s.id, s.name, s.company, COUNT(a.id) quizzes, SUM(a.score) correct, SUM(a.total) total, SUM(a.time_ms) time_ms, MAX(a.at) last_at,
+      ROUND(100.0*SUM(a.score)/MAX(1,SUM(a.total)),1) pct
+      FROM quiz_attempts a JOIN students s ON s.id=a.student_id WHERE ${where.join(' AND ')}
+      GROUP BY s.id ORDER BY correct DESC, pct DESC, time_ms ASC`).all(...args);
+  let rank = 0, prev = null;
+  rows.forEach((r, i) => { const k = r.correct + ':' + r.pct; if (k !== prev) { rank = i + 1; prev = k; } r.rank = rank; });
+  return rows;
+}
+function quizCompanies(video = 0) {
+  const by = {};
+  for (const r of quizBoard({ video })) {
+    const k = r.company || ''; const c = by[k] = by[k] || { company: k, students: 0, correct: 0, total: 0, quizzes: 0 };
+    c.students++; c.correct += r.correct; c.total += r.total; c.quizzes += r.quizzes;
+  }
+  return Object.values(by).map(c => ({ ...c, pct: c.total ? 100 * c.correct / c.total : 0 })).sort((a, b) => b.pct - a.pct || b.students - a.students);
+}
+app.get('/api/admin/quiz-board', requireAdmin, (req, res) => {
+  const video = Number(req.query.video) || 0;
+  res.json({ rows: quizBoard({ company: String(req.query.company || ''), video }), companies: quizCompanies(video) });
+});
+app.get('/api/admin/quiz-board/summary', requireAdmin, (req, res) => {
+  const videos = q(`SELECT v.id, v.title, c.name class_name, (SELECT COUNT(*) FROM quiz_items i WHERE i.video_id=v.id) items,
+      (SELECT COUNT(*) FROM quiz_attempts a WHERE a.video_id=v.id) attempts,
+      (SELECT ROUND(100.0*SUM(score)/MAX(1,SUM(total)),1) FROM quiz_attempts a WHERE a.video_id=v.id) pct
+      FROM videos v JOIN classes c ON c.id=v.class_id WHERE v.status='ready' ORDER BY c.sort, v.id`).all()
+    .filter(v => v.items).map(v => ({ ...v, top: quizBoard({ video: v.id }).slice(0, 3) }));
+  res.json({ videos, companies: quizCompanies() });
+});
+
 // ---------- SMS / OTP settings (admin) ----------
 app.get('/api/admin/sms', requireAdmin, (req, res) => {
   const c = smsCfg(), k = c.api_key || '';
@@ -983,7 +1228,6 @@ app.get('/js/watch.js', (req, res, next) => {
 });
 app.use('/vendor/hls.min.js', (req, res) => res.sendFile(require.resolve('hls.js/dist/hls.min.js')));
 app.use('/fonts', express.static(path.join(__dirname, 'node_modules/@fontsource/hind-siliguri/files'), { maxAge: '30d' }));
-app.get('/v/:token', (req, res) => res.sendFile(path.join(__dirname, 'public/watch.html')));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 // Mark videos stuck in processing (server restarted mid-encode) as errored

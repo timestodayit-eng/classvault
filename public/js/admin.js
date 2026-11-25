@@ -1,4 +1,5 @@
 const $ = (s, r = document) => r.querySelector(s);
+const BRAND = window.BRAND || { logo_html: '<b>▶</b> ক্লাসভল্ট' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const bn = (n) => String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]);
 const fmt = (s) => { s = Math.max(0, Math.round(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
@@ -113,9 +114,9 @@ function modal(html, wide) {
 // ---------------- login ----------------
 function renderLogin() {
   document.body.innerHTML = `<div class="loginbox"><form class="card" id="lf" style="width:360px;padding:30px">
-    <div class="logo" style="margin-bottom:18px"><b>▶</b> ক্লাসভল্ট অ্যাডমিন</div>
+    <div class="logo" style="margin-bottom:18px">${BRAND.logo_html} <span class="muted" style="font-weight:600;font-size:14px">অ্যাডমিন</span></div>
     <label>অ্যাডমিন পাসওয়ার্ড</label><input class="input" type="password" name="password" autofocus required>
-    <div class="err" id="err"></div><button class="btn" style="width:100%;justify-content:center">লগইন</button></form></div>`;
+    <div class="err" id="err"></div><button class="btn" style="width:100%;justify-content:center">লগইন</button></form>${themeBtn('float')}</div>`;
   $('#lf').onsubmit = async (e) => {
     e.preventDefault();
     try { await post('/api/admin/login', Object.fromEntries(new FormData(e.target))); location.reload(); }
@@ -126,12 +127,14 @@ function renderLogin() {
 // ---------------- shell ----------------
 function shell() {
   document.body.innerHTML = `<div class="layout">
-    <aside class="side"><div class="logo"><b>▶</b> ক্লাসভল্ট</div>
+    <aside class="side"><div class="logo">${BRAND.logo_html}</div>
       <nav class="nav">
         <a href="#/overview" data-r="overview">📊 ওভারভিউ</a>
         <a href="#/videos" data-r="videos">🎬 ক্লাস ও ভিডিও</a>
         <a href="#/students" data-r="students">👥 স্টুডেন্ট</a>
         <a href="#/leaderboard" data-r="leaderboard">🏆 লিডারবোর্ড</a>
+        <a href="#/questions" data-r="questions">❓ প্রশ্ন <span class="badge" id="qBadge" style="display:none"></span></a>
+        <a href="#/quiz" data-r="quiz">📝 কুইজ লিডারবোর্ড</a>
         <a href="#/allow" data-r="allow">👮 লগইন তালিকা</a>
         <a href="#/settings" data-r="settings">⚙️ সেটিংস</a>
       </nav>
@@ -139,7 +142,7 @@ function shell() {
         <a class="btn ghost sm" href="/api/admin/students.csv" style="justify-content:center">⬇ স্টুডেন্ট তালিকা (CSV)</a>
         <a class="btn ghost sm" href="/api/admin/export.csv" style="justify-content:center">⬇ ভিডিও রিপোর্ট (CSV)</a>
         <a class="btn ghost sm" href="/api/admin/form-entries.csv" style="justify-content:center">⬇ ফর্ম এন্ট্রি (CSV)</a>
-        <button class="btn ghost sm" id="logout" style="justify-content:center">লগআউট</button>
+        <div style="display:flex;gap:8px">${themeBtn()}<button class="btn ghost sm" id="logout" style="justify-content:center;flex:1">লগআউট</button></div>
       </div>
     </aside><main class="main" id="main"></main></div>`;
   $('#logout').onclick = async () => { await post('/api/admin/logout', {}); location.reload(); };
@@ -152,11 +155,14 @@ async function route() {
   const [, r, id] = (location.hash || '#/overview').split('/');
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.r === r || (r === 'student' && a.dataset.r === 'students') || (r === 'video' && a.dataset.r === 'videos')));
   const main = $('#main');
+  updateQBadge();
   try {
     if (r === 'videos') await viewVideos(main);
     else if (r === 'students') await viewStudents(main, id);
     else if (r === 'settings') await viewSettings(main);
     else if (r === 'allow') await viewAllow(main);
+    else if (r === 'questions') await viewQuestions(main, id || 'open');
+    else if (r === 'quiz') await viewQuizBoard(main, id || 'overall');
     else if (r === 'leaderboard') await viewLeaderboard(main, id || 'overall');
     else if (r === 'student') await viewStudent(main, id);
     else if (r === 'video') await viewVideoReport(main, id);
@@ -211,9 +217,9 @@ async function viewVideos(main) {
         <button class="btn danger sm" onclick="delClass(${c.id})">মুছুন</button></div></div>
         ${vs.map(v => `<div class="vrow"><div class="vthumb" style="background-image:url(/api/thumb/${v.id})"></div>
           <div><b>${esc(v.title)}</b> ${v.source === 'youtube' ? '<span class="pill" style="background:#fee2e2;color:#b91c1c">▶ YouTube</span>' : ''}
-            <div class="vmeta">${v.status === 'ready' ? `<span>⏱ ${v.duration ? fmt(v.duration) : 'প্রথম বার চালালে জানা যাবে'}</span><span>👥 ${bn(v.viewers)} জন দেখেছে</span><span>👁 মোট ${bn(v.views)} বার</span><span>🔑 ${bn(v.access_count)} জনের অনুমতি</span>${v.share_enabled ? '' : '<span class="pill bad">লিংক বন্ধ</span>'}<span>✓ ${bn(v.completed)} জন শেষ করেছে</span><span>গড় ${pct(v.avg_percent)}</span>`
+            <div class="vmeta">${v.status === 'ready' ? `<span>⏱ ${v.duration ? fmt(v.duration) : 'প্রথম বার চালালে জানা যাবে'}</span><span>👥 ${bn(v.viewers)} জন দেখেছে</span><span>👁 মোট ${bn(v.views)} বার</span><span>🔑 ${bn(v.access_count)} জনের অনুমতি</span>${v.share_enabled ? '' : '<span class="pill bad">লিংক বন্ধ</span>'}<span>✓ ${bn(v.completed)} জন শেষ করেছে</span><span>গড় ${pct(v.avg_percent)}</span>${v.quiz_count ? `<span>📝 ${bn(v.quiz_count)}টি কুইজ প্রশ্ন · ${bn(v.quiz_attempts)} জন দিয়েছে</span>` : ''}${v.open_questions ? `<a class="pill warn" href="#/questions/open">❓ ${bn(v.open_questions)}টি প্রশ্নের উত্তর বাকি</a>` : ''}`
               : v.status === 'processing' ? `<span class="pill warn">⏳ প্রসেস হচ্ছে ${v.job != null ? bn(v.job) + '%' : ''}</span>` : `<span class="pill bad">সমস্যা: ${esc(v.error)}</span>`}</div></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.status === 'ready' ? `${v.share_enabled ? `<button class="btn sm" onclick="copyLink('${v.share_token}')">🔗 লিংক কপি</button>` : ''}<a class="btn ghost sm" href="#/video/${v.id}">শেয়ার ও রিপোর্ট</a>` : ''}<button class="btn danger sm" onclick="delVideo(${v.id})">মুছুন</button></div></div>`).join('')
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${v.status === 'ready' ? `${v.share_enabled ? `<button class="btn sm" onclick="copyLink('${v.share_token}')">🔗 লিংক কপি</button>` : ''}<button class="btn ghost sm" onclick="quizEditor(${v.id})">📝 কুইজ${v.quiz_count ? ' (' + bn(v.quiz_count) + ')' : ''}</button><a class="btn ghost sm" href="#/video/${v.id}">শেয়ার ও রিপোর্ট</a>` : ''}<button class="btn danger sm" onclick="delVideo(${v.id})">মুছুন</button></div></div>`).join('')
           || '<div class="muted" style="padding:16px 18px">এই ক্লাসে এখনো কোনো ভিডিও নেই</div>'}</div>`;
     }).join('') || '<div class="card" style="padding:30px;text-align:center" class="muted">প্রথমে একটি ক্লাস তৈরি করুন (যেমন: ক্লাস ১)</div>'}`;
   $('#addClass').onclick = () => {
@@ -333,7 +339,7 @@ async function viewAllow(main) {
   const d = await api('/api/admin/allowlist');
   main.innerHTML = `<div class="head"><h1>👮 লগইন তালিকা <span class="pill" id="acnt">${bn(d.rows.length)}টি নম্বর</span></h1>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="addOne">＋ একজন যোগ করুন</button><button class="btn ghost" id="imp">📋 Excel থেকে পেস্ট করে ইমপোর্ট</button></div></div>
-  <div class="card" style="padding:14px 18px;margin-bottom:16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;${d.enforced ? 'background:#ecfdf5;border-color:#a7f3d0' : 'background:#fef3c7;border-color:#fcd34d'}">
+  <div class="card" style="padding:14px 18px;margin-bottom:16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;${d.enforced ? 'background:var(--ok-soft);border-color:var(--ok)' : 'background:var(--warn-soft);border-color:var(--warn)'}">
     <div style="flex:1;min-width:260px">${d.enforced ? '✅ <b>চালু:</b> শুধু এই তালিকার নম্বরে OTP যাবে ও লগইন করা যাবে। তালিকা থেকে কাউকে বাদ দিলে সে সাথে সাথে বের হয়ে যাবে।'
       : d.enabled ? '⚠️ তালিকা খালি, তাই এখন যেকোনো নম্বর ঢুকতে পারে। ইমপোর্ট করলেই নিয়ম চালু হবে।' : '⚠️ <b>বন্ধ:</b> এখন যেকোনো নম্বর দিয়ে লগইন করা যায়।'}</div>
     <label style="display:flex;gap:8px;align-items:center;font-weight:600;cursor:pointer"><input type="checkbox" id="aen" ${d.enabled ? 'checked' : ''}> শুধু তালিকার নম্বর ঢুকতে পারবে</label></div>
@@ -396,8 +402,8 @@ window.allowDel = (phone) => confirmBox(`${phone} নম্বরটি তা�
 async function viewSettings(main) {
   const d = await api('/api/admin/sms');
   const names = { test: '🧪 টেস্ট মোড (SMS যাবে না, কোড নিচে দেখাবে)', bulksmsbd: 'BulkSMSBD (bulksmsbd.net)', alpha: 'Alpha SMS (sms.net.bd)', custom: 'অন্য কোম্পানি (কাস্টম লিংক)' };
-  main.innerHTML = `<div class="head"><h1>⚙️ সেটিংস</h1></div>
-  ${d.provider === 'test' ? '<div class="card" style="padding:14px 18px;margin-bottom:16px;background:#fef3c7;border-color:#fcd34d;color:#92400e"><b>এখন টেস্ট মোড চালু।</b> স্টুডেন্টদের ফোনে SMS যাচ্ছে না, কোড শুধু নিচের তালিকায় দেখা যাচ্ছে। আসল ব্যবহারের আগে BulkSMSBD বেছে API key দিন।</div>' : ''}
+  main.innerHTML = `<div class="head"><h1>⚙️ সেটিংস</h1></div><div id="brandBox"></div>
+  ${d.provider === 'test' ? '<div class="card" style="padding:14px 18px;margin-bottom:16px;background:var(--warn-soft);border-color:var(--warn)"><b>এখন টেস্ট মোড চালু।</b> স্টুডেন্টদের ফোনে SMS যাচ্ছে না, কোড শুধু নিচের তালিকায় দেখা যাচ্ছে। আসল ব্যবহারের আগে BulkSMSBD বেছে API key দিন।</div>' : ''}
   <div class="cols"><div class="card panel"><h3>📱 লগইন ও SMS সেটিংস</h3><form id="smsF" style="padding:6px 18px 18px">
     <label>SMS কোম্পানি</label><select class="input" name="provider">${d.providers.map(p => `<option value="${p}" ${p === d.provider ? 'selected' : ''}>${names[p] || p}</option>`).join('')}</select>
     <div class="pv pv-bulksmsbd pv-alpha pv-custom"><label>API Key ${d.api_key_set ? `<span class="muted" style="font-weight:400">(সেভ করা আছে ${esc(d.api_key_hint)}, বদলাতে চাইলে নতুনটা লিখুন)</span>` : ''}</label>
@@ -417,6 +423,7 @@ async function viewSettings(main) {
       <td>${l.ok ? `<span class="pill ok">✓ ${l.provider === 'test' ? 'টেস্ট' : 'পাঠানো হয়েছে'}</span>` : `<span class="pill bad" title="${esc(l.error)}">✗ ব্যর্থ</span><div class="muted" style="font-size:12px">${esc(l.error)}</div>`}</td>
       <td style="font-size:18px;font-weight:700;letter-spacing:3px">${esc(l.test_code || '')}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">এখনো কোনো OTP পাঠানো হয়নি</td></tr>'}
   </table></div></div>`;
+  await renderBrand($('#brandBox'));
   const f = $('#smsF'); const showPv = () => f.querySelectorAll('.pv').forEach(x => { x.style.display = x.classList.contains('pv-' + f.provider.value) ? '' : 'none'; });
   f.provider.onchange = showPv; showPv();
   f.onsubmit = async (e) => { e.preventDefault(); $('#smsErr').textContent = '';
@@ -424,7 +431,183 @@ async function viewSettings(main) {
   $('#testF').onsubmit = async (e) => { e.preventDefault(); $('#testErr').textContent = '';
     try { const r = await post('/api/admin/sms/test', Object.fromEntries(new FormData(e.target))); toast(r.test ? 'টেস্ট মোড: SMS যায়নি, তালিকায় দেখুন' : 'SMS পাঠানো হয়েছে, ফোন চেক করুন'); route(); }
     catch (er) { $('#testErr').textContent = er.message; } };
-  refreshTimer = setInterval(() => { if (location.hash === '#/settings' && !document.activeElement.closest('form')) viewSettings(main).catch(() => {}); }, 10000);
+  refreshTimer = setInterval(() => { if (location.hash === '#/settings' && !window.brandDirty && !document.activeElement.closest('form')) viewSettings(main).catch(() => {}); }, 10000);
+}
+
+// ---------------- questions from students ----------------
+async function updateQBadge() {
+  try { const r = await fetch('/api/admin/questions/count'); if (!r.ok) return; const { open } = await r.json();
+    const b = $('#qBadge'); if (b) { b.textContent = bn(open); b.style.display = open ? '' : 'none'; } } catch {}
+}
+async function viewQuestions(main, tab = 'open') {
+  const d = await api('/api/admin/questions?filter=' + tab);
+  const tabs = `<div class="tabs">${[['open', `⏳ উত্তর বাকি (${bn(d.open)})`], ['answered', '✅ উত্তর দেওয়া'], ['hidden', '🙈 লুকানো'], ['all', 'সব']]
+    .map(([k, t]) => `<a href="#/questions/${k}" class="${tab === k ? 'on' : ''}">${t}</a>`).join('')}</div>`;
+  main.innerHTML = `<div class="head"><h1>❓ স্টুডেন্টদের প্রশ্ন</h1></div>${tabs}
+    <div class="muted" style="margin:0 0 14px;font-size:13px">স্টুডেন্টরা প্রতিটি ভিডিওর নিচে প্রশ্ন করতে পারে। আপনি উত্তর দিলে সেটা ওই ভিডিওর নিচে সবাই দেখতে পাবে (প্রশ্নকারীর নামসহ)। উত্তর না দেওয়া প্রশ্ন শুধু প্রশ্নকারী নিজে দেখে। কোনো প্রশ্ন সবার সামনে রাখতে না চাইলে "লুকান" চাপুন।</div>
+    <div class="card panel">${d.items.map(x => `<div class="qrow" id="q${x.id}">
+      <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>${esc(x.name)}</b> ${co(x.company)} <span class="muted" style="font-size:12.5px">${esc(x.phone)} · ${ago(x.created_at)}</span></div>
+        <a class="pill" href="#/video/${x.video_id}">🎬 ${esc(x.video_title)}</a></div>
+      <div style="white-space:pre-wrap;margin:8px 0;font-size:15.5px">${esc(x.body)}</div>
+      <textarea class="input" rows="2" placeholder="উত্তর লিখুন…">${esc(x.answer || '')}</textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn sm" onclick="qAnswer(${x.id})">${x.answer ? 'উত্তর আপডেট করুন' : 'উত্তর দিন'}</button>
+        <button class="btn ghost sm" onclick="qHide(${x.id}, ${x.hidden ? 0 : 1})">${x.hidden ? '👁 দেখান' : '🙈 লুকান'}</button>
+        <button class="btn danger sm" onclick="qDel(${x.id})">মুছুন</button>
+        ${x.answered_at ? `<span class="muted" style="font-size:12.5px">উত্তর দেওয়া হয়েছে ${ago(x.answered_at)}</span>` : ''}</div></div>`).join('')
+      || `<div class="muted" style="padding:30px;text-align:center">${tab === 'open' ? '🎉 সব প্রশ্নের উত্তর দেওয়া হয়ে গেছে' : 'কিছু নেই'}</div>`}</div>`;
+  refreshTimer = setInterval(() => { if (location.hash.startsWith('#/questions') && !document.activeElement.closest('textarea') && ![...document.querySelectorAll('.qrow textarea')].some(t => t.value !== t.defaultValue)) viewQuestions(main, tab).catch(() => {}); }, 30000);
+}
+window.qAnswer = async (id) => { const t = $(`#q${id} textarea`).value.trim(); if (!t) return toast('উত্তর লিখুন');
+  await post('/api/admin/questions/' + id, { answer: t }); toast('উত্তর দেওয়া হয়েছে'); route(); };
+window.qHide = async (id, h) => { await post('/api/admin/questions/' + id, { hidden: h }); route(); };
+window.qDel = (id) => confirmBox('প্রশ্নটি মুছে যাবে।', async () => { await api('/api/admin/questions/' + id, { method: 'DELETE' }); route(); });
+
+// ---------------- quiz editor (per video) ----------------
+window.quizEditor = async (videoId) => {
+  const [d, videos] = await Promise.all([api(`/api/admin/videos/${videoId}/quiz`), api('/api/admin/videos')]);
+  const v = videos.find(x => x.id === videoId) || {};
+  let items = d.items.length ? d.items.map(i => ({ q: i.q, options: [...i.options], correct: i.correct })) : [{ q: '', options: ['', '', '', ''], correct: -1 }];
+  const m = modal(`<h2>📝 কুইজ: ${esc(v.title)}</h2>
+    <div class="muted" style="font-size:13px;margin-bottom:12px">স্টুডেন্ট ভিডিওটি শেষ করলে নিচে কুইজ খুলবে, প্রত্যেকে একবার দিতে পারবে। প্রতিটি প্রশ্নে সঠিক উত্তরের পাশের গোল ঘরে টিক দিন।${d.attempts ? `<br>⚠️ এর মধ্যে ${bn(d.attempts)} জন কুইজ দিয়েছে। প্রশ্ন বদলালে তাদের আগের নম্বর আগের মতোই থাকবে।` : ''}</div>
+    <div id="qzList"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="btn ghost" id="qzAdd">＋ প্রশ্ন যোগ করুন</button><span style="flex:1"></span>
+    <button class="btn" id="qzSave">সেভ করুন</button></div><div class="err" id="qzErr"></div>`, true);
+  const sync = () => m.querySelectorAll('.qedit').forEach((el, n) => {
+    items[n].q = $('.qq', el).value;
+    items[n].options = [...el.querySelectorAll('.qo')].map(i => i.value);
+    const c = el.querySelector('input[type=radio]:checked'); items[n].correct = c ? Number(c.value) : -1;
+  });
+  const draw = () => {
+    $('#qzList', m).innerHTML = items.map((it, n) => `<div class="qedit">
+      <div style="display:flex;gap:8px;align-items:center"><b>${bn(n + 1)}.</b><input class="input qq" value="${esc(it.q)}" placeholder="প্রশ্ন লিখুন"><button class="btn danger sm" onclick="this.dispatchEvent(new CustomEvent('qdel',{bubbles:true,detail:${n}}))" title="প্রশ্নটি বাদ দিন">✕</button></div>
+      ${it.options.map((o, i) => `<div class="opt"><input type="radio" name="c${n}" value="${i}" ${it.correct === i ? 'checked' : ''} title="এটাই সঠিক উত্তর"><input class="input qo" value="${esc(o)}" placeholder="অপশন ${bn(i + 1)}">
+        ${it.options.length > 2 ? `<button class="btn ghost sm" onclick="this.dispatchEvent(new CustomEvent('odel',{bubbles:true,detail:[${n},${i}]}))" title="অপশন বাদ">−</button>` : ''}</div>`).join('')}
+      ${it.options.length < 6 ? `<button class="btn ghost sm" style="margin-top:8px" onclick="this.dispatchEvent(new CustomEvent('oadd',{bubbles:true,detail:${n}}))">＋ অপশন</button>` : ''}</div>`).join('')
+      || '<div class="muted" style="padding:10px 0">কোনো প্রশ্ন নেই। সেভ করলে এই ভিডিওর কুইজ বন্ধ হয়ে যাবে।</div>';
+  };
+  m.addEventListener('qdel', (e) => { sync(); items.splice(e.detail, 1); draw(); });
+  m.addEventListener('odel', (e) => { sync(); const [n, i] = e.detail, it = items[n]; it.options.splice(i, 1); if (it.correct === i) it.correct = -1; else if (it.correct > i) it.correct--; draw(); });
+  m.addEventListener('oadd', (e) => { sync(); items[e.detail].options.push(''); draw(); });
+  $('#qzAdd', m).onclick = () => { sync(); items.push({ q: '', options: ['', '', '', ''], correct: -1 }); draw(); m.querySelector('.qedit:last-child .qq').focus(); };
+  $('#qzSave', m).onclick = async () => {
+    sync(); $('#qzErr', m).textContent = '';
+    // drop empty option boxes, keeping the right answer pointing at the same text
+    const out = items.filter(it => it.q.trim() || it.options.some(o => o.trim())).map(it => {
+      const keep = it.options.map((o, i) => [o.trim(), i]).filter(([o]) => o);
+      return { q: it.q, options: keep.map(([o]) => o), correct: keep.findIndex(([, i]) => i === it.correct) };
+    });
+    try { const r = await post(`/api/admin/videos/${videoId}/quiz`, { items: out }, 'PUT'); m.remove(); toast(r.count ? `কুইজ সেভ হয়েছে (${bn(r.count)}টি প্রশ্ন)` : 'কুইজ বন্ধ করা হয়েছে'); route(); }
+    catch (er) { $('#qzErr', m).textContent = er.message; }
+  };
+  draw();
+};
+
+// ---------------- quiz leaderboard ----------------
+let qzFilter = { company: '', video: '' };
+async function viewQuizBoard(main, tab = 'overall') {
+  const tabs = `<div class="tabs">${[['overall', '🌐 সব মিলিয়ে'], ['video', '🎬 ভিডিও অনুযায়ী'], ['company', '🏢 কোম্পানি অনুযায়ী']]
+    .map(([k, t]) => `<a href="#/quiz/${k}" class="${tab === k ? 'on' : ''}">${t}</a>`).join('')}</div>`;
+  const note = `<div class="muted" style="margin:0 0 16px;font-size:13px">🔒 শুধু অ্যাডমিন দেখতে পান। র‍্যাংকিং = মোট সঠিক উত্তর, সমান হলে যার সঠিকের হার বেশি, তাও সমান হলে যে কম সময়ে শেষ করেছে। প্রত্যেকে প্রতিটি কুইজ একবার দিতে পারে।</div>`;
+  const secs = (ms) => { const s = Math.round((ms || 0) / 1000); return s < 60 ? bn(s) + ' সে' : bn(Math.floor(s / 60)) + ' মি ' + bn(s % 60) + ' সে'; };
+  await companiesReady;
+  if (tab === 'overall' || (tab === 'video' && qzFilter.video)) {
+    const f = { company: qzFilter.company, video: tab === 'video' ? qzFilter.video : '' };
+    const [d, sum] = await Promise.all([api('/api/admin/quiz-board?' + new URLSearchParams(f)), api('/api/admin/quiz-board/summary')]);
+    const top = d.rows.slice(0, 3), vid = Number(f.video) || 0;
+    const vSel = tab === 'video' ? `<select class="input" id="qzv" style="width:auto;min-width:220px"><option value="">← সব কুইজের সারাংশ</option>${sum.videos.map(v => `<option value="${v.id}" ${String(v.id) === qzFilter.video ? 'selected' : ''}>${esc(v.class_name)} · ${esc(v.title)}</option>`).join('')}</select>` : '';
+    main.innerHTML = `<div class="head"><h1>📝 কুইজ লিডারবোর্ড</h1><div style="display:flex;gap:8px;flex-wrap:wrap">${companySelect('qzc', qzFilter.company)}${vSel}</div></div>${tabs}${note}
+    ${top.length ? `<div class="podium">${[top[1], top[0], top[2]].map(r => r ? `<div class="card pod p${r.rank > 3 ? 3 : r.rank}" onclick="location.hash='#/student/${r.id}'">
+        <div class="m">${medal(r.rank)}</div><b>${esc(r.name)}</b><div>${co(r.company)}</div>
+        <div class="pts">${bn(r.correct)} <small>সঠিক</small></div><div class="muted" style="font-size:12.5px">${bn(Math.round(r.pct))}% · ${bn(r.quizzes)}টি কুইজ · ${secs(r.time_ms)}</div></div>` : '<div></div>').join('')}</div>` : ''}
+    <div class="cols">
+      <div class="card panel"><h3>স্টুডেন্ট র‍্যাংকিং <span class="pill">${bn(d.rows.length)} জন</span></h3><div class="scroll"><table>
+        <tr><th>র‍্যাংক</th><th>নাম</th><th>কোম্পানি</th><th>সঠিক</th><th>হার</th><th>কুইজ</th><th>সময়</th><th>কখন</th>${vid ? '<th></th>' : ''}</tr>
+        ${d.rows.map(r => `<tr><td style="font-size:18px;font-weight:700">${medal(r.rank)}</td><td><a href="#/student/${r.id}"><b>${esc(r.name)}</b></a></td><td>${co(r.company)}</td>
+          <td><b style="color:var(--brand)">${bn(r.correct)}</b> / ${bn(r.total)}</td><td style="min-width:90px">${bar(r.pct, r.pct >= 80)}<span class="muted" style="font-size:12px">${bn(Math.round(r.pct))}%</span></td>
+          <td>${bn(r.quizzes)}</td><td>${secs(r.time_ms)}</td><td class="muted">${ago(r.last_at)}</td>
+          ${vid ? `<td><button class="btn ghost sm" onclick="qzReset(${vid}, ${r.id})" title="এই স্টুডেন্ট আবার কুইজ দিতে পারবে">↺ আবার দিতে দিন</button></td>` : ''}</tr>`).join('') || `<tr><td colspan=9 class="muted">এখনো কেউ কুইজ দেয়নি${sum.videos.length ? '' : '। প্রথমে 🎬 ক্লাস ও ভিডিও পেজে কোনো ভিডিওর "📝 কুইজ" বাটন থেকে প্রশ্ন যোগ করুন।'}</td></tr>`}
+      </table></div></div>
+      <div class="card panel"><h3>🏢 কোম্পানি র‍্যাংকিং</h3><table>
+        <tr><th>#</th><th>কোম্পানি</th><th>সঠিকের হার</th><th>অংশ নিয়েছে</th></tr>
+        ${d.companies.map((c, i) => `<tr><td style="font-size:18px">${medal(i + 1)}</td><td>${co(c.company)}<div class="muted" style="font-size:12px">মোট ${bn(c.correct)} / ${bn(c.total)} সঠিক</div></td><td><b>${bn(Math.round(c.pct))}%</b></td><td>${bn(c.students)} জন</td></tr>`).join('') || '<tr><td colspan=4 class="muted">কোনো ডাটা নেই</td></tr>'}
+      </table></div>
+    </div>`;
+    $('#qzc').onchange = (e) => { qzFilter.company = e.target.value; route(); };
+    if ($('#qzv')) $('#qzv').onchange = (e) => { qzFilter.video = e.target.value; route(); };
+    return;
+  }
+  const d = await api('/api/admin/quiz-board/summary');
+  const mini = (rows) => rows.length ? `<table>${rows.map(r => `<tr class="click" onclick="location.hash='#/student/${r.id}'"><td style="width:34px;font-size:17px">${medal(r.rank)}</td><td><b>${esc(r.name)}</b><div>${co(r.company)}</div></td><td style="text-align:right"><b style="color:var(--brand)">${bn(r.correct)}/${bn(r.total)}</b><div class="muted" style="font-size:11.5px">${secs(r.time_ms)}</div></td></tr>`).join('')}</table>` : '<div class="muted" style="padding:14px 18px">এখনো কেউ দেয়নি</div>';
+  if (tab === 'video') {
+    main.innerHTML = `<div class="head"><h1>📝 কুইজ লিডারবোর্ড</h1></div>${tabs}${note}
+      <div class="lbgrid">${d.videos.map(v => `<div class="card panel"><h3 style="font-size:15px"><span>${esc(v.title)}<div class="muted" style="font-size:12px;font-weight:400">${esc(v.class_name)} · ${bn(v.items)}টি প্রশ্ন · ${bn(v.attempts)} জন দিয়েছে${v.attempts ? ' · গড় ' + bn(Math.round(v.pct)) + '%' : ''}</div></span>
+        <button class="btn ghost sm" onclick="qzVideo(${v.id})">পুরো তালিকা →</button></h3>${mini(v.top)}</div>`).join('') || '<div class="card" style="padding:30px">এখনো কোনো ভিডিওতে কুইজ নেই। 🎬 ক্লাস ও ভিডিও পেজে ভিডিওর পাশের "📝 কুইজ" বাটন থেকে প্রশ্ন যোগ করুন।</div>'}</div>`;
+  } else {
+    main.innerHTML = `<div class="head"><h1>📝 কুইজ লিডারবোর্ড</h1></div>${tabs}${note}
+      <div class="card panel"><h3>কোম্পানি র‍্যাংকিং <span class="muted" style="font-size:12.5px;font-weight:400">সঠিকের হার দিয়ে সাজানো</span></h3><table>
+        <tr><th>#</th><th>কোম্পানি</th><th>সঠিকের হার</th><th>মোট সঠিক</th><th>অংশ নিয়েছে</th><th>কুইজ দেওয়া হয়েছে</th></tr>
+        ${d.companies.map((c, i) => `<tr class="click" onclick="qzCompany('${esc(c.company || '__none')}')"><td style="font-size:20px">${medal(i + 1)}</td><td>${co(c.company)}</td><td style="min-width:120px">${bar(c.pct, c.pct >= 80)}<b>${bn(Math.round(c.pct))}%</b></td><td>${bn(c.correct)} / ${bn(c.total)}</td><td>${bn(c.students)} জন</td><td>${bn(c.quizzes)} বার</td></tr>`).join('') || '<tr><td colspan=6 class="muted">কোনো ডাটা নেই</td></tr>'}
+      </table></div>`;
+  }
+}
+window.qzVideo = (id) => { qzFilter.video = String(id); location.hash = '#/quiz/video'; route(); };
+window.qzCompany = (c) => { qzFilter.company = c; qzFilter.video = ''; location.hash = '#/quiz/overall'; route(); };
+window.qzReset = (vid, sid) => confirmBox('এই স্টুডেন্টের এই কুইজের নম্বর মুছে যাবে এবং সে আবার কুইজ দিতে পারবে।', async () => { await api(`/api/admin/videos/${vid}/quiz/attempts/${sid}`, { method: 'DELETE' }); route(); }, 'হ্যাঁ, আবার দিতে দিন');
+
+// ---------------- site customisation (inside ⚙️ সেটিংস) ----------------
+async function renderBrand(el) {
+  const b = await api('/api/admin/brand'); window.brandDirty = false;
+  b.footer = b.footer_raw;
+  const t = (k, label, rows, hint) => `<label>${label}${hint ? ` <span class="muted" style="font-weight:400">${hint}</span>` : ''}</label>${rows ? `<textarea class="input" name="${k}" rows="${rows}">${esc(b[k])}</textarea>` : `<input class="input" name="${k}" value="${esc(b[k])}">`}`;
+  const tog = (k, label) => `<label style="display:flex;gap:10px;align-items:center;font-weight:600;margin:10px 0"><input type="checkbox" name="${k}" ${b[k] === '1' ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--brand)"> ${label}</label>`;
+  el.innerHTML = `<div class="card panel" style="margin-bottom:18px"><h3>🎨 সাইট কাস্টমাইজ <span class="muted" style="font-size:12.5px;font-weight:400">নাম, লোগো, রং আর সাইটের লেখা এখান থেকে বদলান</span></h3>
+  <form id="brandF" style="padding:6px 18px 18px"><div class="cols">
+    <div>
+      ${t('site_name', 'সাইটের নাম')}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div><label>লোগোর চিহ্ন <span class="muted" style="font-weight:400">(ছবি না দিলে)</span></label><input class="input" name="logo_text" value="${esc(b.logo_text)}" maxlength="4" placeholder="▶ বা 🎓"></div>
+        <div><label>মূল রং</label><input class="input" type="color" name="color" value="${esc(b.color)}" style="height:46px;padding:4px"></div></div>
+      <label>লোগোর ছবি <span class="muted" style="font-weight:400">(PNG/JPG/SVG, ৫০০ KB এর কম, বর্গাকার হলে ভালো)</span></label>
+      <div class="bpre">${b.has_logo ? `<img src="/brand/logo?v=${b.ver}">` : ''}<input type="file" id="logoFile" accept="image/png,image/jpeg,image/svg+xml,image/webp" class="input" style="flex:1">${b.has_logo ? '<button type="button" class="btn danger sm" id="logoDel">ছবি বাদ</button>' : ''}</div>
+      <label>ফেভিকন (ব্রাউজার ট্যাবের ছোট আইকন) <span class="muted" style="font-weight:400">(না দিলে লোগো থেকেই বানাবে)</span></label>
+      <div class="bpre"><img src="/brand/favicon?v=${b.ver}"><input type="file" id="favFile" accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml" class="input" style="flex:1">${b.has_favicon ? '<button type="button" class="btn danger sm" id="favDel">বাদ</button>' : ''}</div>
+      <label>স্টুডেন্টদের জন্য শুরুর মোড</label><select class="input" name="theme"><option value="light" ${b.theme === 'light' ? 'selected' : ''}>☀️ দিনের মোড (সাদা)</option><option value="dark" ${b.theme === 'dark' ? 'selected' : ''}>🌙 রাতের মোড (কালো)</option></select>
+      <div class="muted" style="font-size:12px;margin-top:4px">প্রত্যেকে উপরের 🌙/☀️ বাটন দিয়ে নিজের জন্য বদলে নিতে পারবে। ভিডিও পেজ শুরুতে রাতের মোডে থাকে।</div>
+      ${tog('qa_enabled', '❓ ভিডিওর নিচে প্রশ্ন করা চালু')}
+      ${tog('quiz_enabled', '📝 ভিডিওর পরে কুইজ চালু')}
+      ${tog('quiz_need_finish', '🔒 ভিডিও পুরো শেষ করার পরই কুইজ খুলবে')}
+    </div>
+    <div>
+      ${t('hero_title', 'লগইন পেজের বড় শিরোনাম', 2)}
+      ${t('hero_text', 'শিরোনামের নিচের লেখা', 2)}
+      ${t('features', 'বৈশিষ্ট্যের তালিকা', 3, '(প্রতি লাইনে একটা)')}
+      ${t('login_title', 'লগইন বক্সের শিরোনাম')}
+      ${t('login_sub', 'লগইন বক্সের ছোট লেখা', 2)}
+      ${t('catalog_title', 'স্টুডেন্টের হোম পেজের শিরোনাম')}
+      ${t('noshare', 'ভিডিওর উপরের লাল সতর্কবার্তা')}
+      ${t('watch_note', 'ভিডিওর নিচের নিরাপত্তা নোট', 3)}
+      ${t('footer', 'নিচের লেখা (ফুটার)', 0, '(খালি রাখলে "© সাইটের নাম")')}
+    </div></div>
+    <div class="err" id="brandErr"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn">সেভ করুন</button><button type="button" class="btn ghost" id="brandReset">লেখাগুলো আগের মতো করুন</button></div>
+  </form></div>`;
+  const f = $('#brandF'), extra = {};
+  f.oninput = () => { window.brandDirty = true; };
+  const readImg = (file) => new Promise((ok, no) => { if (file.size > 500 * 1024) return no(new Error('ছবিটি ৫০০ KB এর চেয়ে ছোট দিন'));
+    const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(new Error('ছবি পড়া যায়নি')); r.readAsDataURL(file); });
+  $('#logoFile').onchange = async (e) => { try { extra.logo_img = await readImg(e.target.files[0]); window.brandDirty = true; } catch (er) { $('#brandErr').textContent = er.message; e.target.value = ''; } };
+  $('#favFile').onchange = async (e) => { try { extra.favicon = await readImg(e.target.files[0]); window.brandDirty = true; } catch (er) { $('#brandErr').textContent = er.message; e.target.value = ''; } };
+  if ($('#logoDel')) $('#logoDel').onclick = async () => { await post('/api/admin/brand', { logo_img: '' }); location.reload(); };
+  if ($('#favDel')) $('#favDel').onclick = async () => { await post('/api/admin/brand', { favicon: '' }); location.reload(); };
+  $('#brandReset').onclick = () => confirmBox('সাইটের নাম, রং আর সব লেখা শুরুর মতো হয়ে যাবে (লোগোর ছবি থাকবে)।', async () => { await post('/api/admin/brand', { reset: true }); location.reload(); }, 'হ্যাঁ, আগের মতো করুন');
+  f.onsubmit = async (e) => {
+    e.preventDefault(); $('#brandErr').textContent = '';
+    const data = Object.fromEntries(new FormData(f));
+    for (const k of ['qa_enabled', 'quiz_enabled', 'quiz_need_finish']) data[k] = f.elements[k].checked ? '1' : '0';
+    try { await post('/api/admin/brand', { ...data, ...extra }); window.brandDirty = false; toast('সেভ হয়েছে'); setTimeout(() => location.reload(), 600); }
+    catch (er) { $('#brandErr').textContent = er.message; }
+  };
 }
 
 // ---------------- students ----------------

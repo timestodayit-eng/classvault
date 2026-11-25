@@ -45,7 +45,7 @@
     const r = await fetch('/api/share/' + encodeURIComponent(shareToken));
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { $('title').textContent = 'লিংকটি কাজ করছে না'; $('big').style.display = 'none'; showOv('🔗', j.error || 'লিংকটি সঠিক নয়।'); return false; }
-    $('title').textContent = j.video.title; document.title = j.video.title + ' | ক্লাসভল্ট';
+    $('title').textContent = j.video.title; document.title = j.video.title + ' | ' + ((window.BRAND || {}).site_name || '');
     const claim = async () => {
       const c = await fetch('/api/share/' + encodeURIComponent(shareToken) + '/claim', { method: 'POST' });
       if (!c.ok) { showOv('🔗', 'লিংকটি কাজ করছে না।'); return false; }
@@ -83,7 +83,8 @@
     const j = await r.json();
     sessionId = j.sessionId; duration = j.video.duration; wmInfo = j.watermark;
     $('noshare').classList.add('show');
-    document.title = j.video.title + ' | ক্লাসভল্ট';
+    document.title = j.video.title + ' | ' + ((window.BRAND || {}).site_name || '');
+    window.dispatchEvent(new CustomEvent('cv:video', { detail: { id: videoId } }));
     $('title').textContent = j.video.title; $('desc').textContent = j.video.description || '';
     buildWatermark();
     if (j.cfg.y) { await setupYouTube(j); }
@@ -255,7 +256,7 @@
     $('speedList').querySelectorAll('button').forEach(b => b.classList.toggle('on', Number(b.dataset.s) === v.playbackRate));
   });
   v.addEventListener('volumechange', () => { $('mute').textContent = v.muted || v.volume === 0 ? '🔇' : '🔊'; });
-  v.addEventListener('ended', () => { closeSegment(false); log('ended'); flush(false); showOv('🎉', 'ভিডিওটি শেষ হয়েছে!', 'আবার দেখুন', () => { v.currentTime = 0; play(); }); });
+  v.addEventListener('ended', () => { closeSegment(false); log('ended'); flush(false); setTimeout(() => window.dispatchEvent(new Event('cv:ended')), 1500); showOv('🎉', 'ভিডিওটি শেষ হয়েছে!', 'আবার দেখুন', () => { v.currentTime = 0; play(); }); });
   v.addEventListener('waiting', () => log('buffering'));
   v.addEventListener('timeupdate', () => {
     if (!v.seeking) lastPos = v.currentTime;
@@ -288,7 +289,7 @@
     const blocked = k === 'f12' || (mod && ['s', 'u', 'p', 'c', 'a', 'o'].includes(k)) || (mod && e.shiftKey && ['i', 'j', 'c', 's', 'k', 'e', 'm'].includes(k)) ||
       (e.metaKey && e.altKey && ['i', 'j', 'c', 'u'].includes(k)) || (e.metaKey && e.shiftKey && ['3', '4', '5', '6'].includes(k)) || (e.ctrlKey && e.altKey && k === 'i');
     if (blocked) { e.preventDefault(); log('blocked_key', { key: (mod ? 'Ctrl+' : '') + (e.shiftKey ? 'Shift+' : '') + e.key }); blurBriefly(); return; }
-    if (e.target.tagName === 'INPUT') return;
+    if (e.target.closest && e.target.closest('input,textarea,select,button,label,#extras')) return;
     if (k === ' ' || k === 'k') { e.preventDefault(); toggle(); }
     else if (k === 'arrowright') v.currentTime = Math.min(duration, v.currentTime + 5);
     else if (k === 'arrowleft') v.currentTime = Math.max(0, v.currentTime - 5);

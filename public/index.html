@@ -2,12 +2,12 @@
 <html lang="bn">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ক্লাসভল্ট | ক্লাস ভিডিও</title>
+<title>{{site_name}}</title>
 <link rel="stylesheet" href="/css/app.css">
 <script src="/js/otp.js"></script>
 <style>
 .hero{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr}
-.hero-l{background:linear-gradient(150deg,#3730a3,#4f46e5 45%,#7c3aed);color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between}
+.hero-l{background:linear-gradient(150deg,var(--brand-deep),var(--brand) 45%,#7c3aed);color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between}
 .hero-l h1{font-size:40px;line-height:1.25;margin:0 0 14px}
 .hero-l p{opacity:.85;font-size:17px;max-width:440px}
 .feat{display:grid;gap:12px;margin-top:28px}
@@ -40,6 +40,8 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+const B = window.BRAND || {};
+const lines = (t) => esc(t).replace(/\n/g, '<br>');
 const bn = (n) => String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]);
 document.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -52,24 +54,21 @@ async function api(url, body) {
 
 function renderLogin() {
   $('#app').innerHTML = `
+  ${themeBtn('float')}
   <div class="hero">
     <div class="hero-l">
-      <div class="logo" style="color:#fff"><b>▶</b> ক্লাসভল্ট</div>
+      <div class="logo" style="color:#fff">${B.logo_html}</div>
       <div>
-        <h1>তোমার ক্লাসের সব ভিডিও,<br>এক জায়গায়।</h1>
-        <p>কোনো পাসওয়ার্ড লাগবে না। মোবাইল নম্বর দাও, SMS এ আসা কোড দিয়ে ঢুকে যাও।</p>
-        <div class="feat">
-          <div>📚 ক্লাস অনুযায়ী সাজানো ভিডিও</div>
-          <div>⏯️ যেখানে থেমেছিলে, সেখান থেকেই আবার শুরু</div>
-          <div>✅ কোন ভিডিও কতটুকু দেখেছ, সব হিসাব</div>
-        </div>
+        <h1>${lines(B.hero_title)}</h1>
+        <p>${lines(B.hero_text)}</p>
+        <div class="feat">${String(B.features || '').split('\n').filter(x => x.trim()).map(x => `<div>${esc(x)}</div>`).join('')}</div>
       </div>
-      <small style="opacity:.6">© ক্লাসভল্ট</small>
+      <small style="opacity:.6">${esc(B.footer)}</small>
     </div>
     <div class="hero-r">
       <div class="card login">
-        <h2>ভিডিও দেখতে ঢুকুন</h2>
-        <div class="muted">মোবাইল নম্বর দিয়ে লগইন। প্রথমবার হলে প্রোফাইল নিজে থেকেই তৈরি হবে।</div>
+        <h2>${esc(B.login_title)}</h2>
+        <div class="muted">${lines(B.login_sub)}</div>
         <div id="otp"></div>
       </div>
     </div>
@@ -83,15 +82,15 @@ async function renderCatalog(me) {
   const done = classes.reduce((s, c) => s + c.videos.filter(v => v.completed).length, 0);
   $('#app').innerHTML = `
   <div class="topbar">
-    <div class="logo"><b>▶</b> ক্লাসভল্ট</div>
-    <div style="display:flex;align-items:center;gap:14px">
-      <span class="muted">👋 ${esc(me.name)}</span>
+    <div class="logo">${B.logo_html}</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="muted">👋 ${esc(me.name)}</span>${themeBtn()}
       <button class="btn ghost sm" id="out">বের হন</button>
     </div>
   </div>
   <div class="wrap">
     <div style="display:flex;justify-content:space-between;align-items:end;flex-wrap:wrap;gap:12px;margin-bottom:26px">
-      <div><h1 style="margin:0;font-size:26px">আমার ক্লাসগুলো</h1>
+      <div><h1 style="margin:0;font-size:26px">${esc(B.catalog_title)}</h1>
       <div class="muted">মোট ${bn(total)}টি ভিডিও · ${bn(done)}টি শেষ করেছেন</div></div>
     </div>
     <div class="classes">
@@ -114,6 +113,7 @@ async function renderCatalog(me) {
         </div>
       </section>`).join('') || '<div class="card empty muted">🔒 এখনো আপনাকে কোনো ভিডিও শেয়ার করা হয়নি।<br>শিক্ষকের দেওয়া ভিডিও লিংকে ক্লিক করলে ভিডিওটি এখানে চলে আসবে।</div>'}
     </div>
+    <div class="muted" style="text-align:center;font-size:13px;margin-top:40px">${esc(B.footer)}</div>
   </div>`;
   $('#out').onclick = async () => { await api('/api/logout', {}); renderLogin(); };
 }
